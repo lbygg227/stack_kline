@@ -10,6 +10,14 @@ const volInput = ref('100')
 const toast = ref('')
 const toastVisible = ref(false)
 let toastTimer: number | undefined
+interface OrderDraft {
+  side: '买入' | '卖出'
+  name: string
+  price: number
+  vol: number
+  amount: number
+}
+const orderDraft = ref<OrderDraft | null>(null)
 
 const fmt = (n?: number, digits = 2) => (n === undefined ? '--' : n.toFixed(digits))
 
@@ -50,9 +58,26 @@ function submit(side: '买入' | '卖出') {
   if (!it) return
   const price = Number(priceInput.value) || it.price
   const vol = Number(volInput.value) || 100
+  orderDraft.value = {
+    side,
+    name: it.name,
+    price,
+    vol,
+    amount: price * vol * 100,
+  }
+}
+
+function confirmOrder() {
+  const d = orderDraft.value
+  if (!d) return
   showToast(
-    `【模拟成交】${side} ${it.name} ${vol}手 @ ${price.toFixed(2)} 元，金额 ${(price * vol * 100).toLocaleString()} 元（演示功能）`,
+    `【模拟成交】${d.side} ${d.name} ${d.vol}手 @ ${d.price.toFixed(2)} 元，金额 ${d.amount.toLocaleString()} 元（演示功能）`,
   )
+  orderDraft.value = null
+}
+
+function cancelOrder() {
+  orderDraft.value = null
 }
 </script>
 
@@ -124,6 +149,41 @@ function submit(side: '买入' | '卖出') {
       </div>
     </div>
     <div v-else class="tp-empty">等待行情…</div>
+
+    <Transition name="sheet">
+      <div v-if="orderDraft" class="order-mask" @click="cancelOrder">
+        <div class="order-sheet" @click.stop>
+          <div class="order-head">模拟下单确认</div>
+          <div class="order-row">
+            <span>{{ orderDraft.side }}</span>
+            <span class="num">{{ orderDraft.name }}</span>
+          </div>
+          <div class="order-row">
+            <span>价格</span>
+            <span class="num">{{ orderDraft.price.toFixed(2) }} 元</span>
+          </div>
+          <div class="order-row">
+            <span>数量</span>
+            <span class="num">{{ orderDraft.vol }} 手</span>
+          </div>
+          <div class="order-row">
+            <span>金额</span>
+            <span class="num">{{ orderDraft.amount.toLocaleString() }} 元</span>
+          </div>
+          <div class="order-btns">
+            <button class="order-cancel" @click="cancelOrder">取消</button>
+            <button
+              class="order-confirm"
+              :class="orderDraft.side === '买入' ? 'buy' : 'sell'"
+              @click="confirmOrder"
+            >
+              确认{{ orderDraft.side }}
+            </button>
+          </div>
+          <div class="order-tip">演示功能：不产生真实交易</div>
+        </div>
+      </div>
+    </Transition>
 
     <Transition name="toast">
       <div v-if="toastVisible" class="tp-toast">{{ toast }}</div>
@@ -341,6 +401,78 @@ function submit(side: '买入' | '卖出') {
 
 .tp-empty {
   padding: 20px 12px;
+  color: var(--text-3);
+  text-align: center;
+}
+
+.order-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 300;
+  display: flex;
+  align-items: flex-end;
+}
+
+.order-sheet {
+  width: 100%;
+  background: var(--panel);
+  border-radius: 12px 12px 0 0;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.order-head {
+  font-size: 15px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.order-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--text-2);
+}
+
+.order-btns {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.order-cancel,
+.order-confirm {
+  height: 40px;
+  border: none;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.order-cancel {
+  background: var(--panel-2);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+.order-confirm.buy {
+  background: var(--up);
+  color: #fff;
+}
+
+.order-confirm.sell {
+  background: var(--down);
+  color: #fff;
+}
+
+.order-tip {
+  font-size: 11px;
   color: var(--text-3);
   text-align: center;
 }

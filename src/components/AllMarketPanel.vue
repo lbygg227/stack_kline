@@ -3,9 +3,11 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import type { PrefetchProgress, SnapshotStock, UpdateStatus } from '../types'
 import { fetchSnapshot, getPrefetchProgress, getUpdateStatus, runUpdate, startPrefetch } from '../api'
 import { useMarket } from '../composables/useMarket'
+import { usePullRefresh } from '../composables/usePullRefresh'
 import { SW1_INDUSTRIES } from '../data/stocks'
 
-const { selectStock } = useMarket()
+const { selectStock, isMobile } = useMarket()
+const { distance: ptrDistance, refreshing: ptrRefreshing, onTouchStart: ptrStart, onTouchMove: ptrMove, onTouchEnd: ptrEnd } = usePullRefresh(() => loadSnapshot(true))
 
 const stocks = ref<SnapshotStock[]>([])
 const status = ref<'ready' | 'fetching' | 'refreshing'>('fetching')
@@ -19,6 +21,7 @@ const renderCount = ref(300)
 const prefetchProg = ref<PrefetchProgress>({ running: false, done: 0, total: 0, failed: 0 })
 
 let pollTimer: number | undefined
+const sheetMode = ref<'industry' | 'sort' | null>(null)
 
 async function loadSnapshot(force = false) {
   try {
@@ -140,18 +143,68 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   <div class="all-market">
     <div class="am-toolbar">
       <input v-model="kw" type="text" placeholder="过滤名称/代码" class="am-search" />
-      <select v-model="industryFilter" class="select">
-        <option value="">全部行业</option>
-        <option v-for="ind in SW1_INDUSTRIES" :key="ind" :value="ind">{{ ind }}</option>
-      </select>
-      <select v-model="sortKey" class="select">
-        <option v-for="o in SORT_OPTIONS" :key="o.key" :value="o.key">按{{ o.label }}</option>
-      </select>
+      <template v-if="isMobile">
+        <button class="btn" @click="sheetMode = 'industry'">
+          行业{{ industryFilter ? '：' + industryFilter : '' }}
+        </button>
+        <button class="btn" @click="sheetMode = 'sort'">
+          排序：{{ SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? '' }}
+        </button>
+      </template>
+      <template v-else>
+        <select v-model="industryFilter" class="select">
+          <option value="">全部行业</option>
+          <option v-for="ind in SW1_INDUSTRIES" :key="ind" :value="ind">{{ ind }}</option>
+        </select>
+        <select v-model="sortKey" class="select">
+          <option v-for="o in SORT_OPTIONS" :key="o.key" :value="o.key">按{{ o.label }}</option>
+        </select>
+      </template>
       <button class="btn" :class="{ active: asc }" @click="asc = !asc">{{ asc ? '升序' : '降序' }}</button>
       <button class="btn" @click="loadSnapshot(true)" :disabled="status === 'refreshing'">
         {{ status === 'refreshing' ? '刷新中…' : '刷新' }}
       </button>
     </div>
+
+    <Transition name="sheet">
+      <div v-if="isMobile && sheetMode" class="am-filter-mask" @click="sheetMode = null">
+        <div class="am-filter-sheet" @click.stop>
+          <div class="am-filter-head">
+            <span>{{ sheetMode === 'industry' ? '选择行业' : '选择排序' }}</span>
+            <button class="btn" @click="sheetMode = null">完成</button>
+          </div>
+          <div v-if="sheetMode === 'industry'" class="am-filter-chips">
+            <button
+              class="am-chip"
+              :class="{ active: industryFilter === '' }"
+              @click="industryFilter = ''; sheetMode = null"
+            >
+              全部
+            </button>
+            <button
+              v-for="ind in SW1_INDUSTRIES"
+              :key="ind"
+              class="am-chip"
+              :class="{ active: industryFilter === ind }"
+              @click="industryFilter = ind; sheetMode = null"
+            >
+              {{ ind }}
+            </button>
+          </div>
+          <div v-else class="am-filter-chips">
+            <button
+              v-for="o in SORT_OPTIONS"
+              :key="o.key"
+              class="am-chip"
+              :class="{ active: sortKey === o.key }"
+              @click="sortKey = o.key; sheetMode = null"
+            >
+              {{ o.label }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
 
     <div class="am-prefetch">
       <button class="btn" @click="doPrefetch" :disabled="prefetchProg.running">
@@ -204,7 +257,17 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
     <div v-else-if="error" class="am-status down">{{ error }}</div>
     <div v-else-if="stocks.length === 0" class="am-status">暂无数据</div>
 
-    <div v-else class="am-list" @scroll="onScroll">
+    <div
+      v-else
+      class="am-list"
+      @scroll="onScroll"
+      @touchstart.passive="ptrStart"
+      @touchmove.passive="ptrMove"
+      @touchend.passive="ptrEnd"
+    >
+      <div class="ptr" :class="{ refreshing: ptrRefreshing }" :style="{ height: ptrDistance + 'px' }">
+        {{ ptrRefreshing ? '刷新中…' : ptrDistance >= 55 ? '释放刷新' : '下拉刷新' }}
+      </div>
       <button
         v-for="s in visible"
         :key="s.code"
@@ -346,6 +409,19 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   overflow-y: auto;
   min-height: 0;
 }
+.ptr {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 0;
+  overflow: hidden;
+  font-size: 11px;
+  color: var(--text-3);
+  transition: height 0.2s;
+}
+.ptr.refreshing {
+  color: var(--primary);
+}
 .am-item {
   width: 100%;
   padding: 7px 10px;
@@ -385,6 +461,55 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   text-align: center;
   font-size: 11px;
   color: var(--text-3);
+}
+
+.am-filter-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  z-index: 200;
+  display: flex;
+  align-items: flex-end;
+}
+
+.am-filter-sheet {
+  width: 100%;
+  max-height: 70vh;
+  overflow-y: auto;
+  background: var(--panel);
+  border-radius: 12px 12px 0 0;
+  padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+}
+
+.am-filter-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 700;
+  margin-bottom: 10px;
+}
+
+.am-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.am-chip {
+  padding: 7px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.am-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(30, 111, 255, 0.08);
+  font-weight: 600;
 }
 
 .am-status {

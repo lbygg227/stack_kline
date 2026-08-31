@@ -2,10 +2,10 @@
 import { computed, ref, watch } from 'vue'
 import type { StrategyConditions, StrategyResult } from '../types'
 import { aiStrategy, runStrategy } from '../api'
-import { useMarket, WATCHLIST } from '../composables/useMarket'
+import { useMarket } from '../composables/useMarket'
 import { SW1_INDUSTRIES } from '../data/stocks'
 
-const { selectStock, setView, setMobileTab, isMobile } = useMarket()
+const { selectStock, setView, setMobileTab, isMobile, watchlist } = useMarket()
 
 /* ---- 表单状态 ---- */
 const f = ref({
@@ -45,11 +45,16 @@ const error = ref('')
 const results = ref<StrategyResult[]>([])
 const ran = ref(false)
 const showAdvanced = ref(!isMobile.value)
+const resultListRef = ref<HTMLDivElement | null>(null)
 
 // 桌面端默认展开高级条件；移动端默认收起，突出 AI 输入
 watch(isMobile, (v) => {
   showAdvanced.value = !v
 })
+
+function scrollResultsTop() {
+  resultListRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
+}
 
 function backToMarket() {
   if (isMobile.value) setMobileTab('market')
@@ -72,7 +77,7 @@ async function aiSearch() {
   aiExplanation.value = ''
   ran.value = true
   try {
-    const resp = await aiStrategy(t, WATCHLIST.map((w) => w.code))
+    const resp = await aiStrategy(t, watchlist.value.map((w) => w.code))
     aiExplanation.value = resp.explanation
     results.value = resp.results
     // 回填解析出的条件到表单
@@ -117,7 +122,7 @@ const conditions = computed<StrategyConditions>(() => ({
   maxPrice: num(f.value.maxPrice),
   industry: industry.value || undefined,
   pool: pool.value,
-  watchlist: WATCHLIST.map((w) => w.code),
+  watchlist: watchlist.value.map((w) => w.code),
   indicator: indicator.value,
 }))
 
@@ -274,7 +279,14 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
           <span class="st-result-hint">点击查看个股 K 线</span>
         </div>
         <div v-else class="st-empty">填写左侧条件后点击「开始选股」，或用 AI 选股输入自然语言</div>
-        <div v-if="results.length" class="st-list">
+        <button
+          v-if="results.length > 8"
+          class="st-back-top"
+          @click="scrollResultsTop"
+        >
+          回到顶部 ↑
+        </button>
+        <div ref="resultListRef" v-if="results.length" class="st-list">
           <button
             v-for="r in results"
             :key="r.code"
@@ -345,6 +357,7 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
 
 /* 右：结果 */
 .sp-results {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -494,6 +507,21 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.st-back-top {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  z-index: 10;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 16px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 12px;
+  box-shadow: 0 2px 8px rgba(30, 111, 255, 0.35);
+  cursor: pointer;
 }
 .st-item {
   display: grid;

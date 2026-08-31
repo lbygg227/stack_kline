@@ -326,7 +326,7 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
     min-height: 52px;
     flex-wrap: wrap;
     gap: 6px 10px;
-    padding: 8px 10px;
+    padding: calc(8px + env(safe-area-inset-top)) 10px 8px;
   }
   .brand {
     order: 1;

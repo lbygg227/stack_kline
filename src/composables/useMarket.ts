@@ -1,7 +1,8 @@
 import { reactive, ref } from 'vue'
-import type { Quote } from '../types'
-import { INDEX_LIST, WATCHLIST, stockNameOf } from '../data/stocks'
+import type { Quote, StockInfo } from '../types'
+import { DEFAULT_WATCHLIST, INDEX_LIST, stockNameOf } from '../data/stocks'
 import { fetchQuotes } from '../api'
+import { loadWatchlist, removeFromWatchlist as removeWatch, saveWatchlist } from '../data/watchlist'
 
 export type MobileTab = 'market' | 'watchlist' | 'all' | 'strategy' | 'trade'
 
@@ -31,6 +32,8 @@ const state = reactive<MarketState>({
 const isMobile = ref(false)
 /** 移动端底部导航当前页 */
 const mobileTab = ref<MobileTab>('market')
+/** 自选股列表（localStorage 持久化） */
+const watchlist = ref<StockInfo[]>(loadWatchlist())
 
 let mobileMq: MediaQueryList | null = null
 let mobileInitialized = false
@@ -58,7 +61,7 @@ export async function refreshQuotes() {
   if (state.refreshing) return
   state.refreshing = true
   try {
-    const codes = [...INDEX_LIST.map((i) => i.code), ...WATCHLIST.map((w) => w.code), state.currentCode]
+    const codes = [...INDEX_LIST.map((i) => i.code), ...watchlist.value.map((w) => w.code), state.currentCode]
     const unique = Array.from(new Set(codes))
     const list = await fetchQuotes(unique)
     const map = quoteMap(list)
@@ -88,6 +91,17 @@ export function selectStock(code: string, name?: string) {
   void refreshQuotes()
 }
 
+export function removeFromWatchlist(code: string) {
+  watchlist.value = removeWatch(watchlist.value, code)
+  void refreshQuotes()
+}
+
+export function resetWatchlist() {
+  watchlist.value = [...DEFAULT_WATCHLIST]
+  saveWatchlist(watchlist.value)
+  void refreshQuotes()
+}
+
 export function setPeriod(key: string) {
   state.periodKey = key
 }
@@ -107,7 +121,21 @@ export function displayQuote(code: string): Quote | undefined {
 }
 
 export function useMarket() {
-  return { state, isMobile, mobileTab, refreshQuotes, selectStock, setPeriod, setView, setMobileTab, displayQuote, initMobile }
+  return {
+    state,
+    isMobile,
+    mobileTab,
+    watchlist,
+    refreshQuotes,
+    selectStock,
+    removeFromWatchlist,
+    resetWatchlist,
+    setPeriod,
+    setView,
+    setMobileTab,
+    displayQuote,
+    initMobile,
+  }
 }
 
-export { INDEX_LIST, WATCHLIST }
+export { INDEX_LIST }
