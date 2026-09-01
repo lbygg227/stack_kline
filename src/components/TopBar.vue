@@ -1,15 +1,20 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMarket, INDEX_LIST } from '../composables/useMarket'
 import { fetchTunnelInfo, searchStocks } from '../api'
 import type { StockInfo } from '../types'
 
-const { selectStock, displayQuote, setView, state } = useMarket()
+const { selectStock, displayQuote, setView, state, isMobile } = useMarket()
 
 const kw = ref('')
 const results = ref<StockInfo[]>([])
 const searching = ref(false)
 const showDrop = ref(false)
+
+/** 移动端只展示 4 个核心指数（同花顺风格，不横向滚动） */
+const visibleIndexes = computed(() =>
+  isMobile.value ? INDEX_LIST.filter((i) => i.code !== 'sh000300') : INDEX_LIST,
+)
 const remoteUrl = ref('')
 let timer: number | undefined
 
@@ -96,7 +101,7 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
 
     <nav class="index-bar">
       <button
-        v-for="idx in INDEX_LIST"
+        v-for="idx in visibleIndexes"
         :key="idx.code"
         class="index-chip"
         @click="selectStock(idx.code, idx.name)"
@@ -357,6 +362,26 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
     order: 4;
     width: 100%;
     padding-bottom: 2px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    overflow: hidden;
+  }
+  .index-chip {
+    flex-direction: column;
+    align-items: center;
+    gap: 1px;
+    padding: 5px 2px;
+    border-radius: 8px;
+  }
+  .index-name {
+    font-size: 11px;
+  }
+  .index-price {
+    font-size: 12px;
+  }
+  .index-pct {
+    font-size: 11px;
   }
 }
 </style>
