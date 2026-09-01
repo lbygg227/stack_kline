@@ -146,6 +146,86 @@ export interface AiStrategyResponse {
   results: StrategyResult[]
 }
 
+export interface AnalysisDimension {
+  key: string
+  name: string
+  score: number
+  max: number
+  detail: string
+  tone: 'bullish' | 'bearish' | 'neutral'
+}
+
+export interface AnalysisTrend {
+  status: string
+  alignment: string
+  trendStrength: number
+  ma5: number
+  ma10: number
+  ma20: number
+  ma60: number
+  biasMa5: number
+  biasMa10: number
+  biasMa20: number
+}
+
+export interface AnalysisMacd {
+  dif: number
+  dea: number
+  bar: number
+  status: string
+  signal: string
+}
+
+export interface AnalysisRsi {
+  rsi6: number
+  rsi12: number
+  rsi24: number
+  status: string
+  signal: string
+}
+
+export interface AnalysisVolume {
+  ratio5d: number
+  status: string
+  meaning: string
+}
+
+export interface AnalysisLevels {
+  support: number[]
+  resistance: number[]
+  stopLoss: number
+  target: number
+}
+
+export interface AiCommentary {
+  oneSentence: string
+  commentary: string
+  confidence: string
+  model?: string
+}
+
+export interface StockAnalysisResult {
+  code: string
+  name: string
+  price: number
+  changePct: number
+  score: number
+  signalKey: 'strong_buy' | 'buy' | 'watch' | 'reduce' | 'sell' | 'unknown'
+  signalLabel: string
+  summary: string
+  dimensions: AnalysisDimension[]
+  trend: AnalysisTrend
+  macd: AnalysisMacd
+  rsi: AnalysisRsi
+  volume: AnalysisVolume
+  levels: AnalysisLevels
+  reasons: string[]
+  risks: string[]
+  dataQuality: 'full' | 'partial' | 'insufficient'
+  disclaimer: string
+  ai?: AiCommentary | null
+}
+
 export interface TunnelInfo {
   phase: 'stopped' | 'starting' | 'running' | 'failed'
   url?: string

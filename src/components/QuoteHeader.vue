@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useMarket } from '../composables/useMarket'
+import StockAnalysis from './StockAnalysis.vue'
 
 const { state } = useMarket()
+const showAnalysis = ref(false)
 
 const q = computed(() => state.quote)
 
@@ -36,6 +38,7 @@ const items = computed(() => {
       <div class="qh-name-row">
         <span class="qh-name">{{ state.currentName }}</span>
         <span class="qh-code num">{{ state.currentCode.toUpperCase() }}</span>
+        <button class="qh-analysis-btn" @click="showAnalysis = true">📊 分析</button>
       </div>
       <template v-if="q">
         <div class="qh-price-row">
@@ -61,6 +64,13 @@ const items = computed(() => {
       </div>
     </div>
   </div>
+
+  <StockAnalysis
+    v-if="showAnalysis"
+    :code="state.currentCode"
+    :name="state.currentName"
+    @close="showAnalysis = false"
+  />
 </template>
 
 <style scoped>
@@ -91,6 +101,22 @@ const items = computed(() => {
 .qh-name {
   font-size: 18px;
   font-weight: 700;
+}
+.qh-analysis-btn {
+  margin-left: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qh-analysis-btn:hover {
+  border-color: var(--primary);
+  background: rgba(30, 111, 255, 0.06);
 }
 .qh-code {
   font-size: 12px;

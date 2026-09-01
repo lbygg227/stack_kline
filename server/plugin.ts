@@ -10,6 +10,8 @@ import { getKlineWithCache } from './tencent.ts'
 import { parseNaturalLanguage } from './deepseek.ts'
 import { type StrategyConditions } from './strategy.ts'
 import { QuickTunnel, type QuickTunnelInfo } from './tunnel.ts'
+import { analyzeStock } from './analysis.ts'
+import { generateAiCommentary } from './anspire.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -209,6 +211,52 @@ export function marketDataPlugin(): Plugin {
               (code) => getKlineWithCache(code, 'day', 160),
             )
             sendJson(res, 200, { conditions: conds, explanation, results })
+          } catch (e) {
+            sendJson(res, 500, { error: String(e) })
+          }
+          return
+        }
+
+        // ---- 个股分析（规则版） ----
+        if (path === '/api/analysis') {
+          const code = url.searchParams.get('code') ?? ''
+          if (!/^(sh|sz|bj)\d{6}$/.test(code)) {
+            sendJson(res, 400, { error: '无效的股票代码，示例：sh600519' })
+            return
+          }
+          try {
+            const snap = service.getSnapshotState()
+            const name = snap?.stocks.find((s) => s.code === code)?.name ?? code
+            const result = await analyzeStock(code, name)
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: String(e) })
+          }
+          return
+        }
+
+        // ---- 个股分析（AI 点评增强） ----
+        if (path === '/api/analysis/ai') {
+          try {
+            const body = (await readBody(req)) || '{}'
+            const { code } = JSON.parse(body) as { code?: string }
+            if (!code || !/^(sh|sz|bj)\d{6}$/.test(code)) {
+              sendJson(res, 400, { error: '无效的股票代码，示例：sh600519' })
+              return
+            }
+            const snap = service.getSnapshotState()
+            const name = snap?.stocks.find((s) => s.code === code)?.name ?? code
+            const result = await analyzeStock(code, name)
+            let ai = null
+            if (result.dataQuality !== 'insufficient') {
+              try {
+                ai = await generateAiCommentary(result)
+              } catch (e) {
+                console.warn('[analysis] AI 点评失败，回退规则版:', e)
+                ai = null
+              }
+            }
+            sendJson(res, 200, { ...result, ai })
           } catch (e) {
             sendJson(res, 500, { error: String(e) })
           }

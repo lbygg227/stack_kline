@@ -4,6 +4,7 @@ import type {
   PrefetchProgress,
   Quote,
   SnapshotResponse,
+  StockAnalysisResult,
   StockInfo,
   StrategyConditions,
   StrategyResult,
@@ -95,6 +96,30 @@ export async function aiStrategy(text: string, watchlist: string[]): Promise<AiS
     throw new Error(err?.error ?? `ai http ${res.status}`)
   }
   return (await res.json()) as AiStrategyResponse
+}
+
+/** 个股分析（规则版，快速） */
+export async function fetchAnalysis(code: string): Promise<StockAnalysisResult> {
+  const res = await fetch(`/api/analysis?code=${encodeURIComponent(code)}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `analysis http ${res.status}`)
+  }
+  return (await res.json()) as StockAnalysisResult
+}
+
+/** 个股分析（AI 点评增强，较慢） */
+export async function fetchAiAnalysis(code: string): Promise<StockAnalysisResult> {
+  const res = await fetch('/api/analysis/ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `ai analysis http ${res.status}`)
+  }
+  return (await res.json()) as StockAnalysisResult
 }
 
 /** 远程访问隧道状态（Cloudflare quick tunnel） */
