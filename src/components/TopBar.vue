@@ -99,6 +99,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
       选股器
     </button>
 
+    <button
+      class="btn nav-btn"
+      :class="{ active: state.view === 'opinion' }"
+      @click="setView(state.view === 'opinion' ? 'market' : 'opinion')"
+    >
+      观点研究
+    </button>
+
     <nav class="index-bar">
       <button
         v-for="idx in visibleIndexes"

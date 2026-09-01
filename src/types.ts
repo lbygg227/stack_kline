@@ -133,6 +133,132 @@ export interface StrategyConditions {
   indicator: string
 }
 
+export interface StrategyDefinition {
+  key: string
+  name: string
+  description: string
+  needsKline: boolean
+  category: 'technical' | 'quant'
+  version: number
+  minBars: number
+  backtestable?: boolean
+}
+
+export interface BacktestConfig {
+  strategyKeys: string[]
+  codes: string[]
+  holdingDays: number
+  combineMode: 'all' | 'any'
+  startDate?: string
+  endDate?: string
+  commissionRate: number
+  stampDutyRate: number
+  slippageBps: number
+  benchmarkCode: string
+}
+
+export interface BacktestTrade {
+  code: string
+  signalDate: string
+  entryDate: string
+  exitDate: string
+  entryPrice: number
+  exitPrice: number
+  returnPct: number
+  benchmarkReturnPct?: number
+  excessReturnPct?: number
+  maxFavorablePct: number
+  maxAdversePct: number
+  hitStrategies: string[]
+}
+
+export interface BacktestResult {
+  mode: 'event_study'
+  config: BacktestConfig
+  strategyVersions: Record<string, number>
+  metrics: {
+    trades: number
+    winRate: number
+    averageReturnPct: number
+    medianReturnPct: number
+    cumulativeReturnPct: number
+    maxDrawdownPct: number
+    averageBenchmarkReturnPct?: number
+    averageExcessReturnPct?: number
+    approximateSharpe?: number
+    averageMaxFavorablePct: number
+    averageMaxAdversePct: number
+  }
+  trades: BacktestTrade[]
+  equityCurve: Array<{ date: string; value: number }>
+  skippedCodes: Array<{ code: string; reason: string }>
+  warnings: string[]
+}
+
+export type OpinionPlatform = 'zhihu' | 'xueqiu'
+
+export interface OpinionSubscription {
+  id: string
+  platform: OpinionPlatform
+  platformUserId: string
+  nickname: string
+  profileUrl: string
+  enabled: boolean
+  intervalMinutes: number
+  lastCheckedAt: number
+  lastPostId?: string
+  authStatus: 'ready' | 'missing' | 'expired' | 'error'
+  lastError?: string
+  createdAt: number
+  updatedAt: number
+}
+
+export interface OpinionClaim {
+  id: string
+  code?: string
+  name?: string
+  industry?: string
+  stance: 'bullish' | 'bearish' | 'neutral'
+  horizonDays: number
+  thesis: string
+  catalysts: string[]
+  risks: string[]
+  invalidation: string
+  confidence: number
+  evidenceQuote: string
+}
+
+export interface OpinionDocumentVersion {
+  version: number
+  capturedAt: number
+  contentHash: string
+  title: string
+  content: string
+}
+
+export interface OpinionDocument {
+  id: string
+  subscriptionId?: string
+  platform: OpinionPlatform
+  platformPostId?: string
+  authorId: string
+  authorName: string
+  profileUrl?: string
+  url: string
+  title: string
+  content: string
+  publishedAt: number
+  capturedAt: number
+  updatedAt: number
+  contentHash: string
+  versions: OpinionDocumentVersion[]
+  status: 'pending' | 'analyzed' | 'failed'
+  summary?: string
+  claims: OpinionClaim[]
+  analysisModel?: string
+  analysisError?: string
+}
+
 export interface StrategyResult {
   code: string
   name: string
@@ -205,6 +331,47 @@ export interface AiCommentary {
   commentary: string
   confidence: string
   model?: string
+}
+
+export interface NewsItem {
+  title: string
+  url: string
+  snippet: string
+  date?: string
+  source?: string
+}
+
+export interface StockBriefAi {
+  oneSentence: string
+  commentary: string
+  confidence: string
+  risk: string
+  model?: string
+}
+
+export interface BatchStrategyHit {
+  key: string
+  name: string
+}
+
+export interface BatchAnalysisItem {
+  code: string
+  name: string
+  price?: number
+  changePct?: number
+  score?: number
+  signalKey?: string
+  signalLabel?: string
+  summary?: string
+  strategies?: BatchStrategyHit[]
+  news?: NewsItem[]
+  ai?: StockBriefAi
+  error?: string
+}
+
+export interface BatchAnalysisResponse {
+  items: BatchAnalysisItem[]
+  newsProvider: string
 }
 
 export interface StockAnalysisResult {

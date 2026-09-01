@@ -7,12 +7,27 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { service } from './service.ts'
 import { getKlineWithCache } from './tencent.ts'
-import { parseNaturalLanguage } from './deepseek.ts'
+import { extractOpinionDocument, generateStockBrief, parseNaturalLanguage } from './deepseek.ts'
 import { type StrategyConditions } from './strategy.ts'
-import { SCREENING_STRATEGIES } from './screening-strategies.ts'
+import { SCREENING_STRATEGIES, buildIndustryStats, evaluateStrategies } from './screening-strategies.ts'
 import { QuickTunnel, type QuickTunnelInfo } from './tunnel.ts'
 import { analyzeStock } from './analysis.ts'
-import { generateAiCommentary } from './anspire.ts'
+import { generateAiCommentary, generateAiStockBrief } from './anspire.ts'
+import { searchStockNews } from './news.ts'
+import { runBacktest } from './backtest.ts'
+import {
+  applyOpinionAnalysis,
+  getOpinionDocument,
+  ingestOpinionDocument,
+  listOpinionDocuments,
+  listOpinionSubscriptions,
+  markOpinionAnalysisFailed,
+  removeOpinionSubscription,
+  resolveOpinionClaims,
+  saveOpinionSubscription,
+  type OpinionPlatform,
+} from './opinions.ts'
+import { OpinionSyncScheduler, syncOpinionSubscription } from './opinion-sync.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -82,10 +97,13 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 }
 
 export function marketDataPlugin(): Plugin {
+  const opinionScheduler = new OpinionSyncScheduler()
   return {
     name: 'market-data-server',
     configureServer(server) {
       attachRemoteTunnel(server)
+      opinionScheduler.start(() => service.stocksWithIndustry())
+      server.httpServer?.once('close', () => opinionScheduler.stop())
       server.middlewares.use(async (req, res, next) => {
         const path = (req.url ?? '/').split('?')[0]
         if (!path.startsWith('/api/')) {
@@ -169,6 +187,11 @@ export function marketDataPlugin(): Plugin {
         }
 
         // ---- 策略 ----
+        if (path === '/api/strategy-defs') {
+          sendJson(res, 200, { strategies: SCREENING_STRATEGIES })
+          return
+        }
+
         if (path === '/api/strategy') {
           const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
           if (!snap) {
@@ -218,6 +241,118 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+        // ---- 日线策略事件回测 ----
+        if (path === '/api/backtests/run') {
+          try {
+            const body = (await readBody(req)) || '{}'
+            const result = await runBacktest(
+              JSON.parse(body),
+              (code) => getKlineWithCache(code, 'day', 500),
+            )
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        // ---- 个股批量分析（技术 + 策略 + 舆情/AI） ----
+        if (path === '/api/analysis/batch') {
+          try {
+            const body = (await readBody(req)) || '{}'
+            const { codes, withNews, withAi } = JSON.parse(body) as { codes?: string[]; withNews?: boolean; withAi?: boolean }
+            const validCodes = [...new Set((codes ?? []).filter((c) => /^(sh|sz|bj)\d{6}$/.test(c)))]
+            if (validCodes.length === 0) {
+              sendJson(res, 400, { error: '请提供有效的股票代码数组，例如 ["sh600519","sz000858"]' })
+              return
+            }
+            const limited = validCodes.slice(0, 20)
+            const pool = service.stocksWithIndustry()
+            const snapMap = new Map(pool.map((s) => [s.code, s]))
+            const industryStats = buildIndustryStats(pool)
+            const strategyKeys = SCREENING_STRATEGIES.map((d) => d.key)
+            const strategyNames = new Map(SCREENING_STRATEGIES.map((d) => [d.key, d.name]))
+
+            const items: Array<Record<string, unknown>> = []
+            const newsProviders = new Set<string>()
+            const concurrency = 3
+            const queue = [...limited]
+            const worker = async () => {
+              while (queue.length > 0) {
+                const code = queue.shift()
+                if (!code) break
+                const stock = snapMap.get(code)
+                const name = stock?.name ?? code
+                try {
+                  const analysis = await analyzeStock(code, name)
+                  const bars = await getKlineWithCache(code, 'day', 160)
+                  const hitKeys = stock ? evaluateStrategies(strategyKeys, bars, stock, industryStats) : []
+                  const strategies = hitKeys.map((k) => ({ key: k, name: strategyNames.get(k) ?? k }))
+
+                  let news = undefined
+                  if (withNews) {
+                    const nr = await searchStockNews(name, code)
+                    if (nr.provider !== 'none') newsProviders.add(nr.provider)
+                    news = nr.items
+                  }
+
+                  let ai = undefined
+                  if (withAi && analysis.dataQuality !== 'insufficient') {
+                    const briefInput = {
+                      code,
+                      name,
+                      price: analysis.price,
+                      score: analysis.score,
+                      signalLabel: analysis.signalLabel,
+                      trendStatus: analysis.trend.status,
+                      macdStatus: analysis.macd.status,
+                      rsiStatus: analysis.rsi.status,
+                      volumeStatus: analysis.volume.status,
+                      support: analysis.levels.support,
+                      resistance: analysis.levels.resistance,
+                      strategyNames: strategies.map((s) => s.name),
+                      news: (news ?? []).map((n) => ({ title: n.title, snippet: n.snippet, date: n.date })),
+                    }
+                    try {
+                      ai = await generateStockBrief(briefInput)
+                    } catch (e) {
+                      console.warn('[analysis] DeepSeek 批量简报失败，尝试 Anspire:', e)
+                      try {
+                        ai = await generateAiStockBrief(briefInput)
+                      } catch (e2) {
+                        console.warn('[analysis] Anspire 批量简报也失败，回退规则版:', e2)
+                        ai = undefined
+                      }
+                    }
+                  }
+
+                  items.push({
+                    code,
+                    name,
+                    price: analysis.price,
+                    changePct: analysis.changePct,
+                    score: analysis.score,
+                    signalKey: analysis.signalKey,
+                    signalLabel: analysis.signalLabel,
+                    summary: analysis.summary,
+                    strategies,
+                    news,
+                    ai,
+                  })
+                } catch (e) {
+                  items.push({ code, name, error: String(e) })
+                }
+              }
+            }
+            await Promise.all(Array.from({ length: Math.min(concurrency, limited.length) }, worker))
+            items.sort((a, b) => Number(b.score ?? -Infinity) - Number(a.score ?? -Infinity))
+            sendJson(res, 200, { items, newsProvider: [...newsProviders].join(',') || 'none' })
+          } catch (e) {
+            sendJson(res, 500, { error: String(e) })
+          }
+          return
+        }
+
         // ---- 个股分析（规则版） ----
         if (path === '/api/analysis') {
           const code = url.searchParams.get('code') ?? ''
@@ -260,6 +395,155 @@ export function marketDataPlugin(): Plugin {
             sendJson(res, 200, { ...result, ai })
           } catch (e) {
             sendJson(res, 500, { error: String(e) })
+          }
+          return
+        }
+
+        // ---- 博主观点：订阅、导入、结构化分析 ----
+        if (path === '/api/opinions/subscriptions') {
+          const platform = url.searchParams.get('platform')
+          if (req.method === 'GET') {
+            sendJson(res, 200, {
+              subscriptions: listOpinionSubscriptions(
+                platform === 'zhihu' || platform === 'xueqiu' ? platform : undefined,
+              ),
+            })
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as { platform?: OpinionPlatform }
+              if (body.platform !== 'zhihu' && body.platform !== 'xueqiu') {
+                sendJson(res, 400, { error: 'platform 必须是 zhihu 或 xueqiu' })
+                return
+              }
+              sendJson(res, 200, {
+                subscription: saveOpinionSubscription({ ...body, platform: body.platform }),
+              })
+            } catch (e) {
+              sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
+          return
+        }
+
+        const subscriptionMatch = path.match(/^\/api\/opinions\/subscriptions\/([^/]+)$/)
+        if (subscriptionMatch) {
+          if (req.method === 'DELETE') {
+            const removed = removeOpinionSubscription(decodeURIComponent(subscriptionMatch[1]))
+            sendJson(res, removed ? 200 : 404, { removed })
+            return
+          }
+          if (req.method === 'PATCH') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as { platform?: OpinionPlatform }
+              if (body.platform !== 'zhihu' && body.platform !== 'xueqiu') {
+                sendJson(res, 400, { error: 'platform 必须是 zhihu 或 xueqiu' })
+                return
+              }
+              sendJson(res, 200, {
+                subscription: saveOpinionSubscription({
+                  ...body,
+                  id: decodeURIComponent(subscriptionMatch[1]),
+                  platform: body.platform,
+                }),
+              })
+            } catch (e) {
+              sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
+          return
+        }
+
+        if (path === '/api/opinions/feed') {
+          const platform = url.searchParams.get('platform')
+          const subscriptionId = url.searchParams.get('subscriptionId') || undefined
+          const code = url.searchParams.get('code') || undefined
+          sendJson(res, 200, {
+            documents: listOpinionDocuments({
+              platform: platform === 'zhihu' || platform === 'xueqiu' ? platform : undefined,
+              subscriptionId,
+              code,
+              limit: Number(url.searchParams.get('limit')) || 100,
+            }),
+          })
+          return
+        }
+
+        if (path === '/api/opinions/ingest' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as {
+              platform?: OpinionPlatform
+              analyze?: boolean
+              content?: string
+              [key: string]: unknown
+            }
+            if (body.platform !== 'zhihu' && body.platform !== 'xueqiu') {
+              sendJson(res, 400, { error: 'platform 必须是 zhihu 或 xueqiu' })
+              return
+            }
+            const saved = ingestOpinionDocument({
+              ...body,
+              platform: body.platform,
+              content: typeof body.content === 'string' ? body.content : '',
+            })
+            if (body.analyze !== false && saved.changed) {
+              try {
+                const extracted = await extractOpinionDocument(saved.document)
+                const claims = resolveOpinionClaims(extracted.claims, service.stocksWithIndustry())
+                applyOpinionAnalysis(saved.document.id, { ...extracted, claims })
+              } catch (e) {
+                markOpinionAnalysisFailed(saved.document.id, e)
+              }
+            }
+            sendJson(res, 200, {
+              document: getOpinionDocument(saved.document.id),
+              created: saved.created,
+              changed: saved.changed,
+            })
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/opinions/analyze' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { id?: string }
+            const document = body.id ? getOpinionDocument(body.id) : null
+            if (!document) {
+              sendJson(res, 404, { error: '观点文章不存在' })
+              return
+            }
+            const extracted = await extractOpinionDocument(document)
+            const claims = resolveOpinionClaims(extracted.claims, service.stocksWithIndustry())
+            sendJson(res, 200, {
+              document: applyOpinionAnalysis(document.id, { ...extracted, claims }),
+            })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/opinions/sync' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { subscriptionId?: string }
+            if (!body.subscriptionId) {
+              sendJson(res, 400, { error: '缺少 subscriptionId' })
+              return
+            }
+            const result = await syncOpinionSubscription(
+              body.subscriptionId,
+              service.stocksWithIndustry(),
+            )
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
           }
           return
         }

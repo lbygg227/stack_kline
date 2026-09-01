@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
-import type { StrategyConditions, StrategyResult } from '../types'
-import { aiStrategy, runStrategy } from '../api'
+import { computed, onMounted, ref, watch } from 'vue'
+import type { StrategyConditions, StrategyDefinition, StrategyResult } from '../types'
+import { aiStrategy, fetchStrategyDefinitions, runStrategy } from '../api'
 import { useMarket } from '../composables/useMarket'
 import { SW1_INDUSTRIES } from '../data/stocks'
+import BatchAnalysisPanel from './BatchAnalysisPanel.vue'
+import StrategyLab from './StrategyLab.vue'
 
-const { selectStock, setView, setMobileTab, isMobile, watchlist } = useMarket()
+const { state, selectStock, setView, setMobileTab, isMobile, watchlist } = useMarket()
 
 /* ---- 表单状态 ---- */
 const f = ref({
@@ -24,17 +26,9 @@ const pool = ref<'all' | 'watchlist'>('all')
 const indicator = ref('none')
 const industry = ref('')
 
-const STRATEGY_OPTIONS = [
-  { key: 'ma_golden_cross', name: '均线金叉', desc: '近3日 MA5 上穿 MA10，量能配合' },
-  { key: 'shrink_pullback', name: '缩量回踩', desc: '多头排列下缩量回踩 MA5/MA10' },
-  { key: 'volume_breakout', name: '放量突破', desc: '放量突破近 20 日高点' },
-  { key: 'bottom_volume', name: '底部放量', desc: '深度下跌后底部放量收阳' },
-  { key: 'box_oscillation', name: '箱体震荡', desc: '箱体下沿附近，区间有效' },
-  { key: 'one_yang_three_yin', name: '一阳夹三阴', desc: '三阴后放量阳线收复' },
-  { key: 'bull_trend', name: '多头趋势', desc: 'MA5≥MA10≥MA20 且 MA20 上行' },
-  { key: 'emotion_cycle', name: '情绪周期', desc: '换手率 < 1%，情绪冰点区域' },
-  { key: 'dragon_head', name: '龙头策略', desc: '行业内涨幅领先，换手/量比活跃' },
-]
+const strategyDefinitions = ref<StrategyDefinition[]>([])
+const technicalStrategies = computed(() => strategyDefinitions.value.filter((s) => s.category === 'technical'))
+const quantStrategies = computed(() => strategyDefinitions.value.filter((s) => s.category === 'quant'))
 
 const INDICATORS = [
   { key: 'none', label: '不限（仅快照条件）' },
@@ -59,10 +53,24 @@ const ran = ref(false)
 const showAdvanced = ref(!isMobile.value)
 const selectedStrategies = ref<string[]>([])
 const resultListRef = ref<HTMLDivElement | null>(null)
+const showBatch = ref(false)
+const showStrategyLab = ref(false)
+const backtestDefaultCodes = computed(() => {
+  const codes = watchlist.value.map((stock) => stock.code)
+  return codes.length ? codes : [state.currentCode]
+})
 
 // 桌面端默认展开高级条件；移动端默认收起，突出 AI 输入
 watch(isMobile, (v) => {
   showAdvanced.value = !v
+})
+
+onMounted(async () => {
+  try {
+    strategyDefinitions.value = await fetchStrategyDefinitions()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  }
 })
 
 function toggleStrategy(key: string) {
@@ -116,6 +124,7 @@ async function aiSearch() {
     pool.value = c.pool
     indicator.value = c.indicator
     industry.value = c.industry ?? ''
+    selectedStrategies.value = c.strategies ?? []
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -191,7 +200,20 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
       <button class="btn" @click="backToMarket">← 返回看盘</button>
       <span class="sp-title">智能选股器</span>
       <span class="sp-sub">自然语言 AI 选股 + 条件筛选</span>
+      <div class="sp-header-actions">
+        <button class="btn" @click="showStrategyLab = true">策略实验室</button>
+        <button class="btn" @click="showBatch = true">批量分析</button>
+      </div>
     </div>
+
+    <BatchAnalysisPanel v-if="showBatch" @close="showBatch = false" />
+    <StrategyLab
+      v-if="showStrategyLab"
+      :strategies="strategyDefinitions"
+      :selected-keys="selectedStrategies"
+      :default-codes="backtestDefaultCodes"
+      @close="showStrategyLab = false"
+    />
 
     <div class="sp-main">
       <!-- 左：选股条件 -->
@@ -209,16 +231,33 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
         <div v-if="aiExplanation" class="ai-explain">🤖 解析：{{ aiExplanation }}</div>
 
         <div class="sp-section-title">
-          <span>常见策略</span>
+          <span>技术形态策略</span>
           <span class="st-tip-inline">可多选，取交集</span>
         </div>
         <div class="sp-strategy-chips">
           <button
-            v-for="st in STRATEGY_OPTIONS"
+            v-for="st in technicalStrategies"
             :key="st.key"
             class="sp-chip"
             :class="{ active: selectedStrategies.includes(st.key) }"
-            :title="st.desc"
+            :title="st.description"
+            @click="toggleStrategy(st.key)"
+          >
+            {{ st.name }}
+          </button>
+        </div>
+
+        <div class="sp-section-title">
+          <span>量化多因子策略</span>
+          <span class="st-tip-inline">单因子/多因子初筛</span>
+        </div>
+        <div class="sp-strategy-chips">
+          <button
+            v-for="st in quantStrategies"
+            :key="st.key"
+            class="sp-chip"
+            :class="{ active: selectedStrategies.includes(st.key) }"
+            :title="st.description"
             @click="toggleStrategy(st.key)"
           >
             {{ st.name }}
@@ -373,6 +412,11 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
 .sp-sub {
   font-size: 12px;
   color: var(--text-3);
+}
+.sp-header-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
 }
 
 .sp-main {

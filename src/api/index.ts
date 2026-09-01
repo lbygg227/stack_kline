@@ -1,12 +1,19 @@
 import type {
   AiStrategyResponse,
+  BacktestConfig,
+  BacktestResult,
+  BatchAnalysisResponse,
   KLineBar,
+  OpinionDocument,
+  OpinionPlatform,
+  OpinionSubscription,
   PrefetchProgress,
   Quote,
   SnapshotResponse,
   StockAnalysisResult,
   StockInfo,
   StrategyConditions,
+  StrategyDefinition,
   StrategyResult,
   TunnelInfo,
   UpdateStatus,
@@ -84,6 +91,28 @@ export async function runStrategy(conds: StrategyConditions): Promise<StrategyRe
   return json.results ?? []
 }
 
+/** 服务端统一策略目录，前端与 AI 使用同一份元数据 */
+export async function fetchStrategyDefinitions(): Promise<StrategyDefinition[]> {
+  const res = await fetch('/api/strategy-defs')
+  if (!res.ok) throw new Error(`strategy definitions http ${res.status}`)
+  const json = (await res.json()) as { strategies?: StrategyDefinition[] }
+  return json.strategies ?? []
+}
+
+/** 运行固定持有期日线事件回测 */
+export async function runBacktest(config: Partial<BacktestConfig>): Promise<BacktestResult> {
+  const res = await fetch('/api/backtests/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `backtest http ${res.status}`)
+  }
+  return (await res.json()) as BacktestResult
+}
+
 /** AI 选股：自然语言 -> 服务端 DeepSeek 解析 -> 策略引擎 */
 export async function aiStrategy(text: string, watchlist: string[]): Promise<AiStrategyResponse> {
   const res = await fetch('/api/ai-strategy', {
@@ -106,6 +135,125 @@ export async function fetchAnalysis(code: string): Promise<StockAnalysisResult> 
     throw new Error(err?.error ?? `analysis http ${res.status}`)
   }
   return (await res.json()) as StockAnalysisResult
+}
+
+/** 批量个股分析：技术指标 + 策略命中 + 舆情新闻 + 可选 AI 简报 */
+export async function fetchBatchAnalysis(codes: string[], withNews = true, withAi = false): Promise<BatchAnalysisResponse> {
+  const res = await fetch('/api/analysis/batch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ codes, withNews, withAi }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `batch analysis http ${res.status}`)
+  }
+  return (await res.json()) as BatchAnalysisResponse
+}
+
+export async function fetchOpinionSubscriptions(platform?: OpinionPlatform): Promise<OpinionSubscription[]> {
+  const query = platform ? `?platform=${platform}` : ''
+  const res = await fetch(`/api/opinions/subscriptions${query}`)
+  if (!res.ok) throw new Error(`opinion subscriptions http ${res.status}`)
+  const json = (await res.json()) as { subscriptions?: OpinionSubscription[] }
+  return json.subscriptions ?? []
+}
+
+export async function saveOpinionSubscription(
+  subscription: Partial<OpinionSubscription> & { platform: OpinionPlatform },
+): Promise<OpinionSubscription> {
+  const editing = Boolean(subscription.id)
+  const url = editing
+    ? `/api/opinions/subscriptions/${encodeURIComponent(subscription.id!)}`
+    : '/api/opinions/subscriptions'
+  const res = await fetch(url, {
+    method: editing ? 'PATCH' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(subscription),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `save opinion subscription http ${res.status}`)
+  }
+  const json = (await res.json()) as { subscription: OpinionSubscription }
+  return json.subscription
+}
+
+export async function deleteOpinionSubscription(id: string): Promise<void> {
+  const res = await fetch(`/api/opinions/subscriptions/${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`delete opinion subscription http ${res.status}`)
+}
+
+export async function fetchOpinionDocuments(
+  filters: { platform?: OpinionPlatform; subscriptionId?: string; code?: string; limit?: number } = {},
+): Promise<OpinionDocument[]> {
+  const params = new URLSearchParams()
+  if (filters.platform) params.set('platform', filters.platform)
+  if (filters.subscriptionId) params.set('subscriptionId', filters.subscriptionId)
+  if (filters.code) params.set('code', filters.code)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const query = params.size ? `?${params}` : ''
+  const res = await fetch(`/api/opinions/feed${query}`)
+  if (!res.ok) throw new Error(`opinion feed http ${res.status}`)
+  const json = (await res.json()) as { documents?: OpinionDocument[] }
+  return json.documents ?? []
+}
+
+export async function ingestOpinionDocument(input: {
+  platform: OpinionPlatform
+  subscriptionId?: string
+  authorId?: string
+  authorName?: string
+  url?: string
+  title?: string
+  content: string
+  publishedAt?: number
+  analyze?: boolean
+}): Promise<OpinionDocument> {
+  const res = await fetch('/api/opinions/ingest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `opinion ingest http ${res.status}`)
+  }
+  const json = (await res.json()) as { document: OpinionDocument }
+  return json.document
+}
+
+export async function analyzeOpinionDocument(id: string): Promise<OpinionDocument> {
+  const res = await fetch('/api/opinions/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ id }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `opinion analyze http ${res.status}`)
+  }
+  const json = (await res.json()) as { document: OpinionDocument }
+  return json.document
+}
+
+export async function syncOpinionSubscription(id: string): Promise<{
+  fetched: number
+  created: number
+  changed: number
+  analyzed: number
+  failed: number
+}> {
+  const res = await fetch('/api/opinions/sync', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ subscriptionId: id }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `opinion sync http ${res.status}`)
+  }
+  return await res.json()
 }
 
 /** 个股分析（AI 点评增强，较慢） */

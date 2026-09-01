@@ -279,7 +279,7 @@ export async function runStrategy(
   const needKline = needIndicator || selectedStrategies.some((d) => d.needsKline)
 
   if ((needIndicator || selectedStrategies.length > 0) && cands.length > 0) {
-    const industryStats = selectedStrategies.some((d) => d.key === 'dragon_head')
+    const industryStats = selectedStrategies.some((d) => d.key === 'dragon_head' || d.key === 'hot_theme')
       ? buildIndustryStats(pool)
       : new Map()
     const results: StrategyResult[] = []
@@ -307,9 +307,10 @@ export async function runStrategy(
             onProgress?.(done, cands.length)
             continue
           }
+          const strategyName = new Map(SCREENING_STRATEGIES.map((d) => [d.key, d.name]))
           const reasonParts: string[] = []
           if (ev) reasonParts.push(ev.reason)
-          if (hitStrategies.length) reasonParts.push(`策略命中：${hitStrategies.join('、')}`)
+          if (hitStrategies.length) reasonParts.push(`策略命中：${hitStrategies.map((k) => strategyName.get(k) ?? k).join('、')}`)
           results.push({
             code: s.code,
             name: s.name,

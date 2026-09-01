@@ -8,6 +8,7 @@ import QuoteHeader from './components/QuoteHeader.vue'
 import KLineChart from './components/KLineChart.vue'
 import TradePanel from './components/TradePanel.vue'
 import StrategyPanel from './components/StrategyPanel.vue'
+import OpinionPanel from './components/OpinionPanel.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -19,6 +20,7 @@ const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'watchlist', label: '自选', icon: '⭐' },
   { key: 'all', label: '市场', icon: '📊' },
   { key: 'strategy', label: '选股', icon: '🔍' },
+  { key: 'opinion', label: '观点', icon: '📝' },
   { key: 'trade', label: '交易', icon: '💰' },
 ]
 
@@ -59,6 +61,7 @@ onBeforeUnmount(() => {
         <StockList v-else-if="mobileTab === 'watchlist'" />
         <AllMarketPanel v-else-if="mobileTab === 'all'" />
         <StrategyPanel v-else-if="mobileTab === 'strategy'" />
+        <OpinionPanel v-else-if="mobileTab === 'opinion'" />
         <TradePanel v-else-if="mobileTab === 'trade'" />
       </div>
     </template>
@@ -66,6 +69,7 @@ onBeforeUnmount(() => {
     <!-- 桌面端：保持现有三栏布局 -->
     <template v-else>
       <StrategyPanel v-if="state.view === 'strategy'" class="page-view" />
+      <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
       <div v-else class="main">
         <MarketList />
         <div class="center">

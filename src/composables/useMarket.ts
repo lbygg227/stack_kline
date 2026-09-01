@@ -4,7 +4,7 @@ import { DEFAULT_WATCHLIST, INDEX_LIST, stockNameOf } from '../data/stocks'
 import { fetchQuotes } from '../api'
 import { loadWatchlist, removeFromWatchlist as removeWatch, saveWatchlist } from '../data/watchlist'
 
-export type MobileTab = 'market' | 'watchlist' | 'all' | 'strategy' | 'trade'
+export type MobileTab = 'market' | 'watchlist' | 'all' | 'strategy' | 'opinion' | 'trade'
 
 interface MarketState {
   currentCode: string
@@ -14,7 +14,7 @@ interface MarketState {
   indexQuotes: Quote[]
   watchQuotes: Record<string, Quote>
   refreshing: boolean
-  view: 'market' | 'strategy'
+  view: 'market' | 'strategy' | 'opinion'
 }
 
 const state = reactive<MarketState>({
@@ -106,13 +106,13 @@ export function setPeriod(key: string) {
   state.periodKey = key
 }
 
-export function setView(view: 'market' | 'strategy') {
+export function setView(view: 'market' | 'strategy' | 'opinion') {
   state.view = view
 }
 
 export function setMobileTab(tab: MobileTab) {
   mobileTab.value = tab
-  state.view = tab === 'strategy' ? 'strategy' : 'market'
+  state.view = tab === 'strategy' ? 'strategy' : tab === 'opinion' ? 'opinion' : 'market'
 }
 
 /** 供顶部指数栏 / 自选列表展示用的简化摘要 */

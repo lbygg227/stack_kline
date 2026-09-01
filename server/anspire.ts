@@ -11,12 +11,18 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 
+try {
+  process.loadEnvFile('.env')
+} catch {
+  /* 没有 .env 时使用进程已有环境变量 */
+}
+
 const execFileAsync = promisify(execFile)
 
 const DEFAULT_BASE_URL = 'https://open-gateway.anspire.cn/v6'
 const DEFAULT_MODEL = 'Doubao-Seed-2.0-lite'
 
-const API_KEYS = (process.env.ANSPIRE_API_KEYS ?? 'sk-eCVLTPkcWNji3lM15wv3CAp5oGo3h9gu').split(',').map((s) => s.trim()).filter(Boolean)
+export const API_KEYS = (process.env.ANSPIRE_API_KEYS ?? 'sk-eCVLTPkcWNji3lM15wv3CAp5oGo3h9gu').split(',').map((s) => s.trim()).filter(Boolean)
 const BASE_URL = (process.env.ANSPIRE_LLM_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
 const MODEL = process.env.ANSPIRE_LLM_MODEL ?? DEFAULT_MODEL
 
@@ -107,6 +113,64 @@ ${JSON.stringify(analysis)}`
     oneSentence: parsed.oneSentence ?? '',
     commentary: parsed.commentary ?? '',
     confidence: parsed.confidence ?? '中',
+    model: MODEL,
+  }
+}
+
+export interface AnspireStockBrief {
+  oneSentence: string
+  commentary: string
+  confidence: string
+  risk: string
+  model?: string
+}
+
+/** 结合技术分析 + 命中策略 + 舆情新闻，生成更完整的个股简报 */
+export async function generateAiStockBrief(input: {
+  code: string
+  name: string
+  price: number
+  score: number
+  signalLabel: string
+  trendStatus: string
+  macdStatus: string
+  rsiStatus: string
+  volumeStatus: string
+  support: number[]
+  resistance: number[]
+  strategyNames: string[]
+  news: Array<{ title: string; snippet: string; date?: string }>
+}): Promise<AnspireStockBrief> {
+  const system = `你是 A 股个股分析助手。根据技术指标、策略命中和最新舆情，输出简洁、可执行的简报。
+不要编造数据，不要承诺收益，风险提示必须具体。`
+  const user = `请分析下面这只股票，输出 JSON（不要输出其他文字）：
+{
+  "oneSentence": "一句话结论（40字内）",
+  "commentary": "3-5 条要点，每条一行，覆盖趋势、量能、舆情、操作观察",
+  "confidence": "高|中|低",
+  "risk": "主要风险提示（60字内）"
+}
+
+股票与技术面：
+${JSON.stringify(input)}
+
+请结合上面的技术分析、命中策略和新闻标题/摘要，给出结论。`
+
+  const content = await anspireChat({
+    messages: [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    temperature: 0.3,
+    maxTokens: 700,
+    json: true,
+  })
+  const parsed = JSON.parse(content) as { oneSentence?: string; commentary?: string | string[]; confidence?: string; risk?: string }
+  return {
+    oneSentence: parsed.oneSentence ?? '',
+    commentary: Array.isArray(parsed.commentary) ? parsed.commentary.join('\n') : (parsed.commentary ?? ''),
+    confidence: parsed.confidence ?? '中',
+    risk: parsed.risk ?? '',
     model: MODEL,
   }
 }
