@@ -9,6 +9,7 @@ import { service } from './service.ts'
 import { getKlineWithCache } from './tencent.ts'
 import { parseNaturalLanguage } from './deepseek.ts'
 import { type StrategyConditions } from './strategy.ts'
+import { SCREENING_STRATEGIES } from './screening-strategies.ts'
 import { QuickTunnel, type QuickTunnelInfo } from './tunnel.ts'
 import { analyzeStock } from './analysis.ts'
 import { generateAiCommentary } from './anspire.ts'
@@ -310,5 +311,8 @@ function normalizeConditions(b: Partial<StrategyConditions>): StrategyConditions
     pool: b.pool === 'watchlist' ? 'watchlist' : 'all',
     watchlist: Array.isArray(b.watchlist) ? b.watchlist.filter((x) => typeof x === 'string') : [],
     indicator: (b.indicator as StrategyConditions['indicator']) ?? 'none',
+    strategies: Array.isArray(b.strategies)
+      ? (b.strategies as string[]).filter((x) => SCREENING_STRATEGIES.some((d) => d.key === x))
+      : undefined,
   }
 }

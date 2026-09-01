@@ -7,6 +7,7 @@
 
 import type { KLineBar } from './tencent.ts'
 import type { SnapshotStock } from './eastmoney.ts'
+import { SCREENING_STRATEGIES, buildIndustryStats, evaluateStrategies } from './screening-strategies.ts'
 
 export interface StrategyConditions {
   minChangePct?: number
@@ -26,6 +27,8 @@ export interface StrategyConditions {
   industry?: string // 申万一级行业（空=不限）
   pool: 'all' | 'watchlist'
   watchlist: string[]
+  /** 常见策略（多选，取交集） */
+  strategies?: string[]
   indicator:
     | 'none'
     | 'ma5_10_cross_up'
@@ -48,6 +51,7 @@ export interface StrategyResult {
   changePct: number
   reason: string
   extra: Record<string, number>
+  strategies?: string[]
 }
 
 /* ============ 技术指标 ============ */
@@ -267,8 +271,17 @@ export async function runStrategy(
   // 2) 快照条件
   let cands = pool.filter((s) => matchSnapshot(s, conds))
 
-  // 3) 技术指标过滤
-  if (conds.indicator && conds.indicator !== 'none' && cands.length > 0) {
+  // 3) 常见策略 + 技术指标过滤（可组合，取交集）
+  const selectedStrategies = conds.strategies?.length
+    ? SCREENING_STRATEGIES.filter((d) => conds.strategies!.includes(d.key))
+    : []
+  const needIndicator = !!conds.indicator && conds.indicator !== 'none'
+  const needKline = needIndicator || selectedStrategies.some((d) => d.needsKline)
+
+  if ((needIndicator || selectedStrategies.length > 0) && cands.length > 0) {
+    const industryStats = selectedStrategies.some((d) => d.key === 'dragon_head')
+      ? buildIndustryStats(pool)
+      : new Map()
     const results: StrategyResult[] = []
     let done = 0
     const concurrency = 8
@@ -278,18 +291,34 @@ export async function runStrategy(
         const s = queue.shift()
         if (!s) break
         try {
-          const bars = await getKline(s.code)
-          const ev = evalIndicator(bars, conds.indicator)
-          if (ev) {
-            results.push({
-              code: s.code,
-              name: s.name,
-              price: s.price,
-              changePct: s.changePct,
-              reason: ev.reason,
-              extra: ev.extra,
-            })
+          const bars = needKline ? await getKline(s.code) : null
+          const ev = needIndicator ? evalIndicator(bars ?? [], conds.indicator) : null
+          if (needIndicator && !ev) {
+            done++
+            onProgress?.(done, cands.length)
+            continue
           }
+          const hitStrategies = selectedStrategies.length
+            ? evaluateStrategies(conds.strategies!, bars, s, industryStats)
+            : []
+          const strategyPassed = selectedStrategies.length === 0 || hitStrategies.length === selectedStrategies.length
+          if (!strategyPassed) {
+            done++
+            onProgress?.(done, cands.length)
+            continue
+          }
+          const reasonParts: string[] = []
+          if (ev) reasonParts.push(ev.reason)
+          if (hitStrategies.length) reasonParts.push(`策略命中：${hitStrategies.join('、')}`)
+          results.push({
+            code: s.code,
+            name: s.name,
+            price: s.price,
+            changePct: s.changePct,
+            reason: reasonParts.join('；') || '符合基础条件',
+            extra: ev?.extra ?? {},
+            strategies: hitStrategies.length ? hitStrategies : undefined,
+          })
         } catch {
           /* 单只失败跳过 */
         }

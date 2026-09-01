@@ -128,6 +128,8 @@ export interface StrategyConditions {
   industry?: string // 申万一级行业（空=不限）
   pool: 'all' | 'watchlist'
   watchlist: string[]
+  /** 常见策略（多选，取交集） */
+  strategies?: string[]
   indicator: string
 }
 
@@ -138,6 +140,7 @@ export interface StrategyResult {
   changePct: number
   reason: string
   extra: Record<string, number>
+  strategies?: string[]
 }
 
 export interface AiStrategyResponse {

@@ -24,6 +24,18 @@ const pool = ref<'all' | 'watchlist'>('all')
 const indicator = ref('none')
 const industry = ref('')
 
+const STRATEGY_OPTIONS = [
+  { key: 'ma_golden_cross', name: '均线金叉', desc: '近3日 MA5 上穿 MA10，量能配合' },
+  { key: 'shrink_pullback', name: '缩量回踩', desc: '多头排列下缩量回踩 MA5/MA10' },
+  { key: 'volume_breakout', name: '放量突破', desc: '放量突破近 20 日高点' },
+  { key: 'bottom_volume', name: '底部放量', desc: '深度下跌后底部放量收阳' },
+  { key: 'box_oscillation', name: '箱体震荡', desc: '箱体下沿附近，区间有效' },
+  { key: 'one_yang_three_yin', name: '一阳夹三阴', desc: '三阴后放量阳线收复' },
+  { key: 'bull_trend', name: '多头趋势', desc: 'MA5≥MA10≥MA20 且 MA20 上行' },
+  { key: 'emotion_cycle', name: '情绪周期', desc: '换手率 < 1%，情绪冰点区域' },
+  { key: 'dragon_head', name: '龙头策略', desc: '行业内涨幅领先，换手/量比活跃' },
+]
+
 const INDICATORS = [
   { key: 'none', label: '不限（仅快照条件）' },
   { key: 'ma5_10_cross_up', label: 'MA5 上穿 MA10（金叉）' },
@@ -45,12 +57,19 @@ const error = ref('')
 const results = ref<StrategyResult[]>([])
 const ran = ref(false)
 const showAdvanced = ref(!isMobile.value)
+const selectedStrategies = ref<string[]>([])
 const resultListRef = ref<HTMLDivElement | null>(null)
 
 // 桌面端默认展开高级条件；移动端默认收起，突出 AI 输入
 watch(isMobile, (v) => {
   showAdvanced.value = !v
 })
+
+function toggleStrategy(key: string) {
+  const idx = selectedStrategies.value.indexOf(key)
+  if (idx >= 0) selectedStrategies.value.splice(idx, 1)
+  else selectedStrategies.value.push(key)
+}
 
 function scrollResultsTop() {
   resultListRef.value?.scrollTo({ top: 0, behavior: 'smooth' })
@@ -123,6 +142,7 @@ const conditions = computed<StrategyConditions>(() => ({
   industry: industry.value || undefined,
   pool: pool.value,
   watchlist: watchlist.value.map((w) => w.code),
+  strategies: selectedStrategies.value,
   indicator: indicator.value,
 }))
 
@@ -156,6 +176,7 @@ function resetForm() {
   pool.value = 'all'
   indicator.value = 'none'
   industry.value = ''
+  selectedStrategies.value = []
   results.value = []
   ran.value = false
 }
@@ -186,6 +207,23 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
           </button>
         </div>
         <div v-if="aiExplanation" class="ai-explain">🤖 解析：{{ aiExplanation }}</div>
+
+        <div class="sp-section-title">
+          <span>常见策略</span>
+          <span class="st-tip-inline">可多选，取交集</span>
+        </div>
+        <div class="sp-strategy-chips">
+          <button
+            v-for="st in STRATEGY_OPTIONS"
+            :key="st.key"
+            class="sp-chip"
+            :class="{ active: selectedStrategies.includes(st.key) }"
+            :title="st.desc"
+            @click="toggleStrategy(st.key)"
+          >
+            {{ st.name }}
+          </button>
+        </div>
 
         <div class="sp-section-title">
           <span>高级条件</span>
@@ -406,6 +444,37 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
   color: var(--text-2);
   padding-top: 4px;
   border-top: 1px dashed var(--border);
+}
+.st-tip-inline {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
+}
+.sp-strategy-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 6px;
+}
+.sp-chip {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.sp-chip:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+}
+.sp-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(30, 111, 255, 0.08);
+  font-weight: 600;
 }
 .sp-section-title .btn {
   font-size: 11px;
