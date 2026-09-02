@@ -110,9 +110,7 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 
 export function marketDataPlugin(): Plugin {
   const opinionScheduler = new OpinionSyncScheduler()
-  return {
-    name: 'market-data-server',
-    configureServer(server) {
+  const configureApiServer = (server: ViteDevServer) => {
       attachRemoteTunnel(server)
       opinionScheduler.start(() => service.stocksWithIndustry())
       server.httpServer?.once('close', () => opinionScheduler.stop())
@@ -123,6 +121,16 @@ export function marketDataPlugin(): Plugin {
           return
         }
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        if (path === '/api/health') {
+          sendJson(res, 200, {
+            status: 'ok',
+            time: Date.now(),
+            snapshotReady: Boolean(service.getSnapshotState()),
+            opinionScheduler: 'running',
+          })
+          return
+        }
 
         // ---- 全市场快照 ----
         if (path === '/api/snapshot') {
@@ -789,6 +797,12 @@ export function marketDataPlugin(): Plugin {
 
         sendJson(res, 404, { error: `unknown api: ${path}` })
       })
+  }
+  return {
+    name: 'market-data-server',
+    configureServer: configureApiServer,
+    configurePreviewServer(server) {
+      configureApiServer(server as unknown as ViteDevServer)
     },
   }
 }

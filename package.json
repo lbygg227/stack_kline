@@ -8,6 +8,7 @@
     "build": "vue-tsc -b && vite build",
     "test": "tsx --test server/*.test.ts",
     "preview": "vite preview",
+    "serve": "tsx server/server.ts",
     "updater": "tsx server/updater.ts",
     "updater:once": "tsx server/updater.ts --once"
   },
