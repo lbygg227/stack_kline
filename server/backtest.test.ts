@@ -5,7 +5,7 @@ import type { KLineBar } from './tencent.ts'
 
 const DAY = 86_400_000
 
-function barsWithBreakout(): KLineBar[] {
+function barsWithBreakout(breakoutVolume = 1_000): KLineBar[] {
   return Array.from({ length: 35 }, (_, index) => {
     const breakout = index === 24
     const afterBreakout = index > 24
@@ -16,7 +16,7 @@ function barsWithBreakout(): KLineBar[] {
       high: breakout ? 12.1 : afterBreakout ? close + 0.1 : 10.2,
       low: afterBreakout ? close - 0.1 : 9.8,
       close,
-      volume: breakout ? 1_000 : 100,
+      volume: breakout ? breakoutVolume : 100,
     }
   })
 }
@@ -47,4 +47,23 @@ test('拒绝使用当前截面字段的伪历史回测', async () => {
     }, async () => barsWithBreakout()),
     /暂不能历史回测/,
   )
+})
+
+test('策略参数覆盖会改变历史信号', async () => {
+  const bars = barsWithBreakout(200)
+  const defaultResult = await runBacktest({
+    strategyKeys: ['volume_breakout'],
+    codes: ['sh600000'],
+    holdingDays: 3,
+  }, async () => bars)
+  const strictResult = await runBacktest({
+    strategyKeys: ['volume_breakout'],
+    strategyParams: { volume_breakout: { minVolumeRatio: 5 } },
+    codes: ['sh600000'],
+    holdingDays: 3,
+  }, async () => bars)
+
+  assert.equal(defaultResult.metrics.trades, 1)
+  assert.equal(strictResult.metrics.trades, 0)
+  assert.equal(strictResult.config.strategyParams.volume_breakout.minVolumeRatio, 5)
 })

@@ -31,8 +31,8 @@
 | 指数栏 | 上证指数 / 深证成指 / 创业板指 / 科创50 / 沪深300 |
 | 搜索 | 全市场按名称 / 代码搜索（腾讯智能搜索），回车选第一条 |
 | 选股器 | 左侧「选股器」页：基础条件（涨跌幅/换手/量比/PE/市值/成交额/价格/行业）+ 技术形态策略（均线金叉/缩量回踩/放量突破/底部放量/箱体震荡/一阳夹三阴/多头趋势/情绪周期/龙头策略/缠论底背驰/波浪回踩/热点题材）+ 量化多因子策略（均衡多因子/蓝筹收益质量/资金热度/双低选股/稳健价值/超跌反转/趋势质量/低波质量，取交集）+ 技术指标（MA金叉、站上MA20、MACD/KDJ金叉、RSI超卖、BOLL突破等），标的池可选全市场或自选；策略参考 `daily_stock_analysis` 的 analysis skills 与 AlphaSift 选股策略 |
-| 策略实验室 | 选股器页运行历史 OHLCV 事件回测：多策略 AND/OR、固定持有期、滑点/佣金/印花税、沪深300基准超额、胜率/回撤/近似 Sharpe；仅开放能由历史行情可靠重算的策略 |
-| 观点研究 | 知乎/雪球双板块：按博主 ID、昵称或主页添加订阅，保存原文版本，DeepSeek 抽取标的、方向、期限、逻辑、风险、失效条件和原文证据；支持手动导入、立即同步及分钟级监听 |
+| 策略实验室 | 选股器页运行历史 OHLCV 事件回测：多策略 AND/OR、动态阈值参数、实验方案本地保存、固定持有期、滑点/佣金/印花税、沪深300基准超额、胜率/回撤/近似 Sharpe；仅开放能由历史行情可靠重算的策略 |
+| 观点研究 | 知乎/雪球双板块：按博主 ID、昵称或主页添加订阅，保存原文版本，DeepSeek 抽取标的、方向、期限、逻辑、风险、失效条件和原文证据；支持手动导入、分钟级监听、观点共识评分、按发布时间回测及博主可靠性统计 |
 | AI 选股 | 「选股器」页顶部对话框：输入自然语言（如「医药行业、市值100亿以上、MACD金叉」），DeepSeek 解析成条件并自动执行选股 |
 | 个股分析 | 报价头「分析」按钮：技术指标多维度评分（趋势/乖离率/量能/支撑/MACD/RSI）+ 关键价位 + 买卖信号；可点击「AI 深度点评」用 Anspire 生成自然语言点评 |
 | 批量分析 | 选股器页「批量分析」按钮：输入一组股票代码，批量输出技术评分、命中策略、舆情新闻（Anspire Search，可降级 Tavily/Brave/SerpAPI）与 AI 简报（DeepSeek 优先，Anspire 兜底） |
@@ -122,6 +122,8 @@ server/                 # 数据服务（与 Vite 解耦，可独立运行）
 ├── opinions.ts         # 观点订阅、原文版本、结构化观点与本地持久化
 ├── opinion-adapters.ts # 知乎开放平台 / 雪球时间线采集适配器
 ├── opinion-sync.ts     # 增量同步编排与分钟级监听
+├── opinion-signals.ts  # 按时效、置信度、博主可靠性聚合标的共识
+├── opinion-backtest.ts # 按文章发布时间执行观点事件回测
 ├── industry.ts         # 申万一级行业映射（code -> 行业名）
 ├── deepseek.ts         # DeepSeek 调用（自然语言 -> 选股条件）
 ├── scheduler.ts        # 每日自动更新调度器
@@ -139,6 +141,7 @@ src/
 │   ├── StrategyPanel.vue  # 选股器（条件 + 技术指标 + 结果）
 │   ├── StrategyLab.vue    # 策略回测配置与结果
 │   ├── OpinionPanel.vue   # 知乎 / 雪球观点研究双板块
+│   ├── OpinionResearchPanel.vue # 观点回测与博主可靠性面板
 │   ├── QuoteHeader.vue # 当前股票报价摘要
 │   ├── KLineChart.vue  # K 线面板（klinecharts v10 DataLoader 模式 + 指标/周期工具栏）
 │   └── TradePanel.vue  # 盘口五档 + 模拟交易
@@ -171,6 +174,8 @@ data/                   # 运行时落盘数据（已 gitignore）：快照 + K 
 | `GET/POST /api/opinions/subscriptions` | 查询或新增知乎/雪球博主订阅 |
 | `PATCH/DELETE /api/opinions/subscriptions/:id` | 更新或删除订阅 |
 | `GET /api/opinions/feed` | 查询已保存的观点原文与结构化观点 |
+| `GET /api/opinions/signals` | 查询按时效、一致性和置信度聚合的标的观点信号 |
+| `POST /api/opinions/backtest` | 从文章发布后的下一交易日回测观点方向 |
 | `POST /api/opinions/ingest` | 手动导入原文并可选 AI 分析 |
 | `POST /api/opinions/analyze` | 重新执行观点抽取 |
 | `POST /api/opinions/sync` | 立即增量同步指定博主 |

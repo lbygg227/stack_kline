@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { runBacktest } from '../api'
 import type { BacktestResult, StrategyDefinition } from '../types'
 
@@ -12,6 +12,10 @@ const emit = defineEmits<{ close: [] }>()
 
 const backtestable = computed(() => props.strategies.filter((strategy) => strategy.backtestable))
 const selected = ref<string[]>([])
+const strategyParams = ref<Record<string, Record<string, number>>>({})
+const selectedParameterGroups = computed(() =>
+  backtestable.value.filter((strategy) => selected.value.includes(strategy.key) && strategy.params.length),
+)
 const codesText = ref('')
 const holdingDays = ref(20)
 const combineMode = ref<'all' | 'any'>('all')
@@ -24,6 +28,24 @@ const slippageBps = ref(5)
 const running = ref(false)
 const error = ref('')
 const result = ref<BacktestResult | null>(null)
+const presetName = ref('')
+const selectedPresetId = ref('')
+
+interface StrategyLabPreset {
+  id: string
+  name: string
+  selected: string[]
+  strategyParams: Record<string, Record<string, number>>
+  holdingDays: number
+  combineMode: 'all' | 'any'
+  benchmarkCode: string
+  commissionRate: number
+  stampDutyRate: number
+  slippageBps: number
+}
+
+const STORAGE_KEY = 'stock-kline-strategy-lab-v1'
+const presets = ref<StrategyLabPreset[]>([])
 
 watch(
   () => [props.selectedKeys, props.defaultCodes, props.strategies] as const,
@@ -33,15 +55,110 @@ watch(
       selected.value = props.selectedKeys.filter((key) => allowed.has(key))
       if (selected.value.length === 0 && backtestable.value[0]) selected.value = [backtestable.value[0].key]
     }
+    for (const strategy of backtestable.value) {
+      const values = strategyParams.value[strategy.key] ?? {}
+      strategyParams.value[strategy.key] = Object.fromEntries(
+        strategy.params.map((schema) => [schema.key, values[schema.key] ?? schema.default]),
+      )
+    }
     if (!codesText.value) codesText.value = props.defaultCodes.join(' ')
   },
   { immediate: true, deep: true },
+)
+
+onMounted(() => {
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '{}') as {
+      current?: Partial<StrategyLabPreset>
+      presets?: StrategyLabPreset[]
+    }
+    if (Array.isArray(saved.presets)) presets.value = saved.presets
+    if (saved.current) applyPreset(saved.current)
+  } catch {
+    /* 本地配置损坏时使用默认值 */
+  }
+})
+
+watch(
+  [selected, strategyParams, holdingDays, combineMode, benchmarkCode, commissionRate, stampDutyRate, slippageBps, presets],
+  () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      current: currentPreset('current', '当前配置'),
+      presets: presets.value,
+    }))
+  },
+  { deep: true },
 )
 
 function toggleStrategy(key: string) {
   const index = selected.value.indexOf(key)
   if (index >= 0) selected.value.splice(index, 1)
   else selected.value.push(key)
+}
+
+function resetStrategyParams(strategy: StrategyDefinition) {
+  strategyParams.value[strategy.key] = Object.fromEntries(
+    strategy.params.map((schema) => [schema.key, schema.default]),
+  )
+}
+
+function currentPreset(id: string, name: string): StrategyLabPreset {
+  return {
+    id,
+    name,
+    selected: [...selected.value],
+    strategyParams: JSON.parse(JSON.stringify(strategyParams.value)),
+    holdingDays: holdingDays.value,
+    combineMode: combineMode.value,
+    benchmarkCode: benchmarkCode.value,
+    commissionRate: commissionRate.value,
+    stampDutyRate: stampDutyRate.value,
+    slippageBps: slippageBps.value,
+  }
+}
+
+function applyPreset(preset: Partial<StrategyLabPreset>) {
+  const allowed = new Set(backtestable.value.map((strategy) => strategy.key))
+  if (Array.isArray(preset.selected)) selected.value = preset.selected.filter((key) => allowed.has(key))
+  if (preset.strategyParams) {
+    strategyParams.value = {
+      ...strategyParams.value,
+      ...JSON.parse(JSON.stringify(preset.strategyParams)),
+    }
+  }
+  if (preset.holdingDays) holdingDays.value = preset.holdingDays
+  if (preset.combineMode === 'all' || preset.combineMode === 'any') combineMode.value = preset.combineMode
+  if (preset.benchmarkCode) benchmarkCode.value = preset.benchmarkCode
+  if (typeof preset.commissionRate === 'number') commissionRate.value = preset.commissionRate
+  if (typeof preset.stampDutyRate === 'number') stampDutyRate.value = preset.stampDutyRate
+  if (typeof preset.slippageBps === 'number') slippageBps.value = preset.slippageBps
+}
+
+function savePreset() {
+  const name = presetName.value.trim()
+  if (!name) {
+    error.value = '请先填写实验方案名称'
+    return
+  }
+  const existing = presets.value.find((preset) => preset.name === name)
+  const saved = currentPreset(existing?.id ?? crypto.randomUUID(), name)
+  presets.value = existing
+    ? presets.value.map((preset) => preset.id === existing.id ? saved : preset)
+    : [...presets.value, saved]
+  selectedPresetId.value = saved.id
+  presetName.value = ''
+  error.value = ''
+}
+
+function loadPreset() {
+  const preset = presets.value.find((item) => item.id === selectedPresetId.value)
+  if (preset) applyPreset(preset)
+}
+
+function deletePreset() {
+  if (!selectedPresetId.value) return
+  presets.value = presets.value.filter((preset) => preset.id !== selectedPresetId.value)
+  selectedPresetId.value = ''
 }
 
 function parseCodes(): string[] {
@@ -76,6 +193,9 @@ async function run() {
   try {
     result.value = await runBacktest({
       strategyKeys: selected.value,
+      strategyParams: Object.fromEntries(
+        selected.value.map((key) => [key, strategyParams.value[key] ?? {}]),
+      ),
       codes,
       holdingDays: holdingDays.value,
       combineMode: combineMode.value,
@@ -124,6 +244,38 @@ const fmtPct = (value: number | undefined) =>
             >
               {{ strategy.name }}
             </button>
+          </div>
+
+          <div v-if="selectedParameterGroups.length" class="sl-param-groups">
+            <div v-for="strategy in selectedParameterGroups" :key="strategy.key" class="sl-param-group">
+              <div class="sl-param-head">
+                <b>{{ strategy.name }}参数</b>
+                <button class="btn" @click="resetStrategyParams(strategy)">恢复默认</button>
+              </div>
+              <div class="sl-param-grid">
+                <label v-for="schema in strategy.params" :key="schema.key">
+                  <span>{{ schema.label }}{{ schema.unit ? `（${schema.unit}）` : '' }}</span>
+                  <input
+                    v-model.number="strategyParams[strategy.key][schema.key]"
+                    type="number"
+                    :min="schema.min"
+                    :max="schema.max"
+                    :step="schema.step"
+                  />
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <div class="sl-presets">
+            <input v-model="presetName" placeholder="实验方案名称" />
+            <button class="btn" @click="savePreset">保存当前方案</button>
+            <select v-model="selectedPresetId">
+              <option value="">选择已保存方案</option>
+              <option v-for="preset in presets" :key="preset.id" :value="preset.id">{{ preset.name }}</option>
+            </select>
+            <button class="btn" :disabled="!selectedPresetId" @click="loadPreset">载入</button>
+            <button class="btn" :disabled="!selectedPresetId" @click="deletePreset">删除</button>
           </div>
 
           <div class="sl-grid">
@@ -257,6 +409,15 @@ const fmtPct = (value: number | undefined) =>
   cursor: pointer;
 }
 .sl-chip.active { border-color: var(--primary); color: var(--primary); background: rgba(30, 111, 255, 0.08); }
+.sl-param-groups { display: grid; gap: 8px; margin-bottom: 14px; }
+.sl-param-group { padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+.sl-param-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; font-size: 11px; }
+.sl-param-head .btn { padding: 3px 6px; font-size: 9px; }
+.sl-param-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.sl-param-grid label { display: flex; flex-direction: column; gap: 4px; color: var(--text-3); font-size: 10px; }
+.sl-param-grid input { min-width: 0; padding: 6px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text-1); }
+.sl-presets { display: grid; grid-template-columns: 1fr auto 1fr auto auto; gap: 6px; margin-bottom: 12px; }
+.sl-presets input, .sl-presets select { min-width: 0; padding: 6px 8px; border: 1px solid var(--border); border-radius: 4px; background: var(--panel); color: var(--text-1); }
 .sl-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .sl-grid label { display: flex; flex-direction: column; gap: 5px; color: var(--text-3); font-size: 11px; }
 .sl-grid input, .sl-grid select, .sl-codes textarea {
@@ -295,6 +456,8 @@ const fmtPct = (value: number | undefined) =>
   .sl-mask { padding: 0; align-items: flex-end; }
   .sl-panel { max-height: 96vh; border-radius: 12px 12px 0 0; }
   .sl-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sl-param-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .sl-presets { grid-template-columns: 1fr auto; }
   .sl-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .sl-trade-head, .sl-trade { grid-template-columns: 1fr 1fr 1fr; }
   .sl-trade-head span:nth-child(3), .sl-trade-head span:nth-child(4),

@@ -10,11 +10,13 @@ import {
   SCREENING_STRATEGIES,
   evaluateStrategies,
   type IndustryStats,
+  type StrategyParameterValues,
 } from './screening-strategies.ts'
 import type { KLineBar } from './tencent.ts'
 
 export interface BacktestConfig {
   strategyKeys: string[]
+  strategyParams: StrategyParameterValues
   codes: string[]
   holdingDays: number
   combineMode: 'all' | 'any'
@@ -182,6 +184,15 @@ export async function runBacktest(
   if (codes.length === 0) throw new Error('请提供至少一个有效股票代码')
   const config: BacktestConfig = {
     strategyKeys,
+    strategyParams: Object.fromEntries(strategyKeys.map((key) => {
+      const definition = available.get(key)!
+      const rawValues = rawConfig.strategyParams?.[key] ?? {}
+      return [key, Object.fromEntries(definition.params.map((schema) => {
+        const raw = Number(rawValues[schema.key])
+        const value = Number.isFinite(raw) ? Math.max(schema.min, Math.min(schema.max, raw)) : schema.default
+        return [schema.key, value]
+      }))]
+    })),
     codes,
     holdingDays: Math.max(1, Math.min(120, Math.round(rawConfig.holdingDays ?? 20))),
     combineMode: rawConfig.combineMode === 'any' ? 'any' : 'all',
@@ -219,7 +230,13 @@ export async function runBacktest(
       if (!dateInRange(signalDate, config.startDate, config.endDate)) continue
       const history = bars.slice(0, index + 1)
       const stock = historicalStock(code, bars, index)
-      const hits = evaluateStrategies(strategyKeys, history, stock, emptyIndustryStats)
+      const hits = evaluateStrategies(
+        strategyKeys,
+        history,
+        stock,
+        emptyIndustryStats,
+        config.strategyParams,
+      )
       const passed = config.combineMode === 'all' ? hits.length === strategyKeys.length : hits.length > 0
       if (!passed) continue
 
