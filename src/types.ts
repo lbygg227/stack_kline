@@ -261,6 +261,41 @@ export interface PortfolioBacktestResult {
   warnings: string[]
 }
 
+export interface StrategyOptimizationConfig {
+  strategyKey: string
+  codes: string[]
+  parameterRanges: Record<string, { min: number; max: number; step: number }>
+  holdingDays: number
+  splitRatio: number
+  objective: 'averageExcess' | 'averageReturn' | 'winRate' | 'sharpe'
+  minTrades: number
+  benchmarkCode: string
+  maxCombinations: number
+}
+
+export interface StrategyOptimizationTrial {
+  parameters: Record<string, number>
+  score: number
+  trades: number
+  winRate: number
+  averageReturnPct: number
+  averageExcessReturnPct?: number
+  approximateSharpe?: number
+}
+
+export interface StrategyOptimizationResult {
+  config: StrategyOptimizationConfig
+  splitDate: string
+  testStartDate: string
+  combinations: number
+  trials: StrategyOptimizationTrial[]
+  bestParameters: Record<string, number>
+  training: BacktestResult
+  testing: BacktestResult
+  degradationPct?: number
+  warnings: string[]
+}
+
 export type OpinionPlatform = 'zhihu' | 'xueqiu'
 
 export interface OpinionSubscription {

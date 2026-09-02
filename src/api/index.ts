@@ -20,6 +20,8 @@ import type {
   StockInfo,
   StrategyConditions,
   StrategyDefinition,
+  StrategyOptimizationConfig,
+  StrategyOptimizationResult,
   StrategyResult,
   TunnelInfo,
   UpdateStatus,
@@ -130,6 +132,21 @@ export async function runPortfolioBacktest(
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { error?: string } | null
     throw new Error(err?.error ?? `portfolio backtest http ${res.status}`)
+  }
+  return await res.json()
+}
+
+export async function optimizeStrategy(
+  config: Partial<StrategyOptimizationConfig>,
+): Promise<StrategyOptimizationResult> {
+  const res = await fetch('/api/backtests/optimize', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `strategy optimization http ${res.status}`)
   }
   return await res.json()
 }

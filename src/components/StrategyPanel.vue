@@ -6,6 +6,7 @@ import { useMarket } from '../composables/useMarket'
 import { SW1_INDUSTRIES } from '../data/stocks'
 import BatchAnalysisPanel from './BatchAnalysisPanel.vue'
 import StrategyLab from './StrategyLab.vue'
+import StrategyOptimizer from './StrategyOptimizer.vue'
 
 const { state, selectStock, setView, setMobileTab, isMobile, watchlist } = useMarket()
 
@@ -55,6 +56,7 @@ const selectedStrategies = ref<string[]>([])
 const resultListRef = ref<HTMLDivElement | null>(null)
 const showBatch = ref(false)
 const showStrategyLab = ref(false)
+const showOptimizer = ref(false)
 const backtestDefaultCodes = computed(() => {
   const codes = watchlist.value.map((stock) => stock.code)
   return codes.length ? codes : [state.currentCode]
@@ -202,6 +204,7 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
       <span class="sp-sub">自然语言 AI 选股 + 条件筛选</span>
       <div class="sp-header-actions">
         <button class="btn" @click="showStrategyLab = true">策略实验室</button>
+        <button class="btn" @click="showOptimizer = true">参数优化</button>
         <button class="btn" @click="showBatch = true">批量分析</button>
       </div>
     </div>
@@ -213,6 +216,12 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
       :selected-keys="selectedStrategies"
       :default-codes="backtestDefaultCodes"
       @close="showStrategyLab = false"
+    />
+    <StrategyOptimizer
+      v-if="showOptimizer"
+      :strategies="strategyDefinitions"
+      :default-codes="backtestDefaultCodes"
+      @close="showOptimizer = false"
     />
 
     <div class="sp-main">
