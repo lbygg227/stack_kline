@@ -4,18 +4,21 @@ import {
   analyzeOpinionDocument,
   deleteOpinionSubscription,
   fetchOpinionDocuments,
+  fetchOpinionSignals,
   fetchOpinionSubscriptions,
   ingestOpinionDocument,
   saveOpinionSubscription,
   syncOpinionSubscription,
 } from '../api'
-import type { OpinionDocument, OpinionPlatform, OpinionSubscription } from '../types'
+import type { OpinionDocument, OpinionPlatform, OpinionSignal, OpinionSubscription } from '../types'
 import { useMarket } from '../composables/useMarket'
+import OpinionResearchPanel from './OpinionResearchPanel.vue'
 
 const { setView, setMobileTab, isMobile, selectStock } = useMarket()
 const platform = ref<OpinionPlatform>('zhihu')
 const subscriptions = ref<OpinionSubscription[]>([])
 const documents = ref<OpinionDocument[]>([])
+const signals = ref<OpinionSignal[]>([])
 const loading = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -34,6 +37,7 @@ const importAnalyze = ref(true)
 const importing = ref(false)
 const syncingId = ref('')
 const analyzingId = ref('')
+const showResearch = ref(false)
 
 function backToMarket() {
   if (isMobile.value) setMobileTab('market')
@@ -44,12 +48,14 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [subs, docs] = await Promise.all([
+    const [subs, docs, signalList] = await Promise.all([
       fetchOpinionSubscriptions(platform.value),
       fetchOpinionDocuments({ platform: platform.value, limit: 100 }),
+      fetchOpinionSignals(platform.value),
     ])
     subscriptions.value = subs
     documents.value = docs
+    signals.value = signalList
     if (importSubscriptionId.value && !subs.some((item) => item.id === importSubscriptionId.value)) {
       importSubscriptionId.value = ''
     }
@@ -198,8 +204,18 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
         <div class="op-title">观点研究</div>
         <div class="op-subtitle">原文留档 · 观点抽取 · 增量监听</div>
       </div>
-      <button class="btn" :disabled="loading" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
+      <div class="op-head-actions">
+        <button class="btn" @click="showResearch = true">观点回测</button>
+        <button class="btn" :disabled="loading" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
+      </div>
     </header>
+
+    <OpinionResearchPanel
+      v-if="showResearch"
+      :platform="platform"
+      :subscriptions="subscriptions"
+      @close="showResearch = false"
+    />
 
     <div class="op-tabs">
       <button :class="{ active: platform === 'zhihu' }" @click="platform = 'zhihu'">知乎板块</button>
@@ -271,6 +287,24 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
       </aside>
 
       <section class="op-feed">
+        <div v-if="signals.length" class="op-card op-signals">
+          <div class="op-feed-title">
+            <b>观点共识信号</b>
+            <span>近180日 · 按时效、置信度与一致性加权</span>
+          </div>
+          <div class="op-signal-list">
+            <button
+              v-for="signal in signals.slice(0, 12)"
+              :key="signal.code"
+              class="op-signal"
+              @click="openStock(signal.code, signal.name)"
+            >
+              <span><b>{{ signal.name }}</b><small>{{ signal.code.toUpperCase() }}</small></span>
+              <strong :class="`stance-${signal.stance}`">{{ signal.score > 0 ? '+' : '' }}{{ signal.score.toFixed(0) }}</strong>
+              <span class="op-muted">{{ signal.authors.length }}位博主 · {{ signal.claimCount }}条 · 一致度{{ Math.round(signal.agreement * 100) }}%</span>
+            </button>
+          </div>
+        </div>
         <div class="op-feed-title">
           <b>{{ platform === 'zhihu' ? '知乎' : '雪球' }}观点时间线</b>
           <span>{{ documents.length }} 篇</span>
@@ -319,7 +353,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 <style scoped>
 .op-page { height: 100%; overflow: auto; background: var(--bg); }
 .op-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); }
-.op-head > :last-child { margin-left: auto; }
+.op-head-actions { margin-left: auto; display: flex; gap: 7px; }
 .op-title { font-size: 16px; font-weight: 700; }
 .op-subtitle, .op-muted { color: var(--text-3); font-size: 11px; }
 .op-tabs { display: flex; gap: 6px; padding: 10px 14px 0; }
@@ -345,6 +379,10 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-sub-actions { margin-top: 7px; }.op-sub-actions .btn { font-size: 10px; }.danger { color: var(--down); }
 .op-check { flex-direction: row !important; align-items: center; }.op-check input { width: auto; }
 .op-feed-title { display: flex; justify-content: space-between; align-items: center; padding: 0 2px; }.op-feed-title span { color: var(--text-3); font-size: 11px; }
+.op-signals .op-feed-title { margin-bottom: 8px; }
+.op-signal-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.op-signal { display: grid; grid-template-columns: 1fr auto; gap: 3px 8px; padding: 8px; text-align: left; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2); color: var(--text-1); cursor: pointer; }
+.op-signal:hover { border-color: var(--primary); }.op-signal small { display: block; color: var(--text-3); font-weight: 400; }.op-signal strong { font-size: 16px; }.op-signal > :last-child { grid-column: 1 / -1; }
 .op-empty { padding: 24px; text-align: center; color: var(--text-3); }
 .op-document h3 { margin-top: 8px; font-size: 15px; }
 .op-doc-meta { color: var(--text-3); font-size: 10px; }.op-doc-meta b { color: var(--text-2); font-size: 12px; }.op-doc-meta a { margin-left: auto; color: var(--primary); }
@@ -360,6 +398,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-analysis-state { justify-content: space-between; margin-top: 8px; color: var(--down); font-size: 10px; }
 @media (max-width: 820px) {
   .op-main { grid-template-columns: 1fr; padding: 8px; }
+  .op-signal-list { grid-template-columns: 1fr; }
   .op-tabs { padding-left: 8px; }
   .op-head { padding: 8px; }
 }

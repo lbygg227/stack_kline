@@ -142,10 +142,20 @@ export interface StrategyDefinition {
   version: number
   minBars: number
   backtestable?: boolean
+  params: Array<{
+    key: string
+    label: string
+    default: number
+    min: number
+    max: number
+    step: number
+    unit?: string
+  }>
 }
 
 export interface BacktestConfig {
   strategyKeys: string[]
+  strategyParams?: Record<string, Record<string, number>>
   codes: string[]
   holdingDays: number
   combineMode: 'all' | 'any'
@@ -257,6 +267,94 @@ export interface OpinionDocument {
   claims: OpinionClaim[]
   analysisModel?: string
   analysisError?: string
+}
+
+export interface OpinionSignalEvidence {
+  documentId: string
+  claimId: string
+  authorName: string
+  publishedAt: number
+  stance: 'bullish' | 'bearish' | 'neutral'
+  confidence: number
+  thesis: string
+  evidenceQuote: string
+}
+
+export interface OpinionSignal {
+  code: string
+  name: string
+  industry?: string
+  score: number
+  stance: 'bullish' | 'bearish' | 'neutral'
+  confidence: number
+  agreement: number
+  authors: string[]
+  claimCount: number
+  latestAt: number
+  horizonDays: number
+  theses: string[]
+  risks: string[]
+  evidence: OpinionSignalEvidence[]
+}
+
+export interface OpinionBacktestConfig {
+  platform?: OpinionPlatform
+  subscriptionId?: string
+  startDate?: string
+  endDate?: string
+  holdingDays?: number
+  benchmarkCode: string
+}
+
+export interface OpinionBacktestEvent {
+  documentId: string
+  claimId: string
+  platform: OpinionPlatform
+  authorName: string
+  code: string
+  name: string
+  stance: 'bullish' | 'bearish'
+  publishedAt: number
+  signalDate: string
+  entryDate: string
+  exitDate: string
+  holdingDays: number
+  confidence: number
+  forwardReturnPct: number
+  benchmarkReturnPct?: number
+  directionalReturnPct: number
+  directionalExcessPct?: number
+  correct: boolean
+  thesis: string
+}
+
+export interface OpinionAuthorPerformance {
+  authorName: string
+  evaluated: number
+  correct: number
+  hitRate: number
+  averageDirectionalReturnPct: number
+  averageDirectionalExcessPct?: number
+  reliability: number
+}
+
+export interface OpinionBacktestResult {
+  mode: 'opinion_event_study'
+  config: OpinionBacktestConfig
+  metrics: {
+    totalClaims: number
+    evaluated: number
+    skipped: number
+    hitRate: number
+    averageForwardReturnPct: number
+    averageDirectionalReturnPct: number
+    medianDirectionalReturnPct: number
+    averageDirectionalExcessPct?: number
+  }
+  events: OpinionBacktestEvent[]
+  authors: OpinionAuthorPerformance[]
+  skipped: Array<{ documentId: string; claimId: string; reason: string }>
+  warnings: string[]
 }
 
 export interface StrategyResult {

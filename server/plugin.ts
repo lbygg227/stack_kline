@@ -28,6 +28,8 @@ import {
   type OpinionPlatform,
 } from './opinions.ts'
 import { OpinionSyncScheduler, syncOpinionSubscription } from './opinion-sync.ts'
+import { buildOpinionSignals } from './opinion-signals.ts'
+import { runOpinionBacktest } from './opinion-backtest.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -471,6 +473,46 @@ export function marketDataPlugin(): Plugin {
               limit: Number(url.searchParams.get('limit')) || 100,
             }),
           })
+          return
+        }
+
+        if (path === '/api/opinions/signals') {
+          const platform = url.searchParams.get('platform')
+          const selectedPlatform = platform === 'zhihu' || platform === 'xueqiu' ? platform : undefined
+          const documents = listOpinionDocuments({ platform: selectedPlatform, limit: 500 })
+          sendJson(res, 200, {
+            signals: buildOpinionSignals(documents, {
+              platform: selectedPlatform,
+              maxAgeDays: Number(url.searchParams.get('maxAgeDays')) || 180,
+            }),
+          })
+          return
+        }
+
+        if (path === '/api/opinions/backtest' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as {
+              platform?: OpinionPlatform
+              subscriptionId?: string
+              startDate?: string
+              endDate?: string
+              holdingDays?: number
+              benchmarkCode?: string
+            }
+            const documents = listOpinionDocuments({
+              platform: body.platform,
+              subscriptionId: body.subscriptionId,
+              limit: 500,
+            })
+            const result = await runOpinionBacktest(
+              documents,
+              body,
+              (code) => getKlineWithCache(code, 'day', 500),
+            )
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
           return
         }
 

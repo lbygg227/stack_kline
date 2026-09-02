@@ -5,7 +5,10 @@ import type {
   BatchAnalysisResponse,
   KLineBar,
   OpinionDocument,
+  OpinionBacktestConfig,
+  OpinionBacktestResult,
   OpinionPlatform,
+  OpinionSignal,
   OpinionSubscription,
   PrefetchProgress,
   Quote,
@@ -197,6 +200,33 @@ export async function fetchOpinionDocuments(
   if (!res.ok) throw new Error(`opinion feed http ${res.status}`)
   const json = (await res.json()) as { documents?: OpinionDocument[] }
   return json.documents ?? []
+}
+
+export async function fetchOpinionSignals(
+  platform?: OpinionPlatform,
+  maxAgeDays = 180,
+): Promise<OpinionSignal[]> {
+  const params = new URLSearchParams({ maxAgeDays: String(maxAgeDays) })
+  if (platform) params.set('platform', platform)
+  const res = await fetch(`/api/opinions/signals?${params}`)
+  if (!res.ok) throw new Error(`opinion signals http ${res.status}`)
+  const json = (await res.json()) as { signals?: OpinionSignal[] }
+  return json.signals ?? []
+}
+
+export async function runOpinionBacktest(
+  config: Partial<OpinionBacktestConfig>,
+): Promise<OpinionBacktestResult> {
+  const res = await fetch('/api/opinions/backtest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `opinion backtest http ${res.status}`)
+  }
+  return await res.json()
 }
 
 export async function ingestOpinionDocument(input: {
