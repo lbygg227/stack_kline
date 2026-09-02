@@ -35,6 +35,7 @@
 | 观点研究 | 知乎/雪球双板块：按博主 ID、昵称或主页添加订阅，保存原文版本，DeepSeek 抽取标的、方向、期限、逻辑、风险、失效条件和原文证据；支持分页增量采集、短文详情补取、自动重试与同步日志、观点共识评分、按发布时间回测及博主可靠性统计 |
 | 融合选股 | 先执行技术/基本条件初筛，再按观点时效、置信度和一致性加权；可要求必须存在看多共识，并对高置信看空观点执行风险否决 |
 | 历史数据 | TickFlow 前复权日/周/月 K 线支持按数量或起止日期获取（单次最多 10000 根）；策略回测默认使用 2000 根；每日保存 PE/PB/市值等截面快照用于未来时点回测 |
+| 个股研究档案 | 从个股分析面板保存当前技术结论或手工研究笔记；每次修订保留版本，可对比字段变化，并将命中该股票的博主观点合并为证据时间线 |
 | AI 选股 | 「选股器」页顶部对话框：输入自然语言（如「医药行业、市值100亿以上、MACD金叉」），DeepSeek 解析成条件并自动执行选股 |
 | 个股分析 | 报价头「分析」按钮：技术指标多维度评分（趋势/乖离率/量能/支撑/MACD/RSI）+ 关键价位 + 买卖信号；可点击「AI 深度点评」用 Anspire 生成自然语言点评 |
 | 批量分析 | 选股器页「批量分析」按钮：输入一组股票代码，批量输出技术评分、命中策略、舆情新闻（Anspire Search，可降级 Tavily/Brave/SerpAPI）与 AI 简报（DeepSeek 优先，Anspire 兜底） |
@@ -176,6 +177,9 @@ data/                   # 运行时落盘数据（已 gitignore）：快照 + K 
 | `GET /api/analysis?code=sh600519` | 个股分析（规则版：评分 + 信号 + 维度 + 关键价位） |
 | `POST /api/analysis/batch` | 批量个股分析（body: `codes[]`、`withNews`、`withAi`；技术评分 + 命中策略 + 舆情 + AI 简报） |
 | `POST /api/analysis/ai` | 个股分析（AI 点评增强：规则分析 + Anspire 自然语言点评） |
+| `GET /api/research/dossier` | 个股研究记录、历史版本和观点证据时间线 |
+| `POST/DELETE /api/research/records` | 保存新结论/修订版本或删除研究记录 |
+| `GET /api/research/compare` | 对比指定研究记录的两个历史版本 |
 | `POST /api/ai-strategy` | AI 选股（自然语言 -> DeepSeek 解析 -> 策略引擎） |
 | `GET/POST /api/opinions/subscriptions` | 查询或新增知乎/雪球博主订阅 |
 | `PATCH/DELETE /api/opinions/subscriptions/:id` | 更新或删除订阅 |

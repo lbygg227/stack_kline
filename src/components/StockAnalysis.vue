@@ -2,6 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import type { AiCommentary, StockAnalysisResult } from '../types'
 import { fetchAiAnalysis, fetchAnalysis } from '../api'
+import ResearchDossierPanel from './ResearchDossierPanel.vue'
 
 const props = defineProps<{ code: string; name: string }>()
 const emit = defineEmits<{ close: [] }>()
@@ -11,6 +12,7 @@ const error = ref('')
 const data = ref<StockAnalysisResult | null>(null)
 const aiLoading = ref(false)
 const aiData = ref<AiCommentary | null>(null)
+const showDossier = ref(false)
 
 const signalCls = computed(() => {
   const k = data.value?.signalKey
@@ -68,8 +70,19 @@ onMounted(() => void load())
           <span class="sa-name">{{ data?.name ?? name }}</span>
           <span class="num sa-code">{{ code.toUpperCase() }}</span>
         </div>
-        <button class="sa-close" @click="emit('close')">✕</button>
+        <div class="sa-head-actions">
+          <button class="btn" @click="showDossier = true">研究档案</button>
+          <button class="sa-close" @click="emit('close')">✕</button>
+        </div>
       </div>
+
+      <ResearchDossierPanel
+        v-if="showDossier"
+        :code="code"
+        :name="data?.name ?? name"
+        :analysis="data"
+        @close="showDossier = false"
+      />
 
       <div class="sa-body">
         <div v-if="loading" class="sa-status">分析计算中…</div>
@@ -203,6 +216,7 @@ onMounted(() => void load())
   background: var(--panel-2);
   flex-shrink: 0;
 }
+.sa-head-actions { display: flex; align-items: center; gap: 8px; }
 
 .sa-title {
   display: flex;

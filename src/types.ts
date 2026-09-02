@@ -516,6 +516,52 @@ export interface FusionResult {
   risks: string[]
 }
 
+export type ResearchStance = 'bullish' | 'bearish' | 'neutral'
+
+export interface ResearchRevision {
+  version: number
+  createdAt: number
+  contentHash: string
+  title: string
+  thesis: string
+  stance: ResearchStance
+  horizonDays: number
+  targetPrice?: number
+  stopLoss?: number
+  catalysts: string[]
+  risks: string[]
+  tags: string[]
+  snapshot?: Record<string, unknown>
+}
+
+export interface ResearchRecord {
+  id: string
+  code: string
+  name: string
+  source: 'manual' | 'analysis' | 'opinion' | 'fusion'
+  createdAt: number
+  updatedAt: number
+  currentVersion: number
+  revisions: ResearchRevision[]
+}
+
+export interface ResearchDossier {
+  code: string
+  records: ResearchRecord[]
+  timeline: Array<{
+    id: string
+    type: 'research' | 'opinion'
+    timestamp: number
+    title: string
+    summary: string
+    stance: ResearchStance
+    recordId?: string
+    version?: number
+    author?: string
+    sourceUrl?: string
+  }>
+}
+
 export interface AiStrategyResponse {
   conditions: StrategyConditions
   explanation: string

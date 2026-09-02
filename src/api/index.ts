@@ -17,6 +17,9 @@ import type {
   PortfolioBacktestResult,
   PrefetchProgress,
   Quote,
+  ResearchDossier,
+  ResearchRecord,
+  ResearchStance,
   SnapshotResponse,
   StockAnalysisResult,
   StockInfo,
@@ -204,6 +207,55 @@ export async function fetchAnalysis(code: string): Promise<StockAnalysisResult> 
     throw new Error(err?.error ?? `analysis http ${res.status}`)
   }
   return (await res.json()) as StockAnalysisResult
+}
+
+export async function fetchResearchDossier(code: string): Promise<ResearchDossier> {
+  const res = await fetch(`/api/research/dossier?code=${encodeURIComponent(code)}`)
+  if (!res.ok) throw new Error(`research dossier http ${res.status}`)
+  return await res.json()
+}
+
+export async function saveResearchRecord(input: {
+  id?: string
+  code: string
+  name?: string
+  source?: 'manual' | 'analysis' | 'opinion' | 'fusion'
+  title?: string
+  thesis: string
+  stance?: ResearchStance
+  horizonDays?: number
+  targetPrice?: number
+  stopLoss?: number
+  catalysts?: string[]
+  risks?: string[]
+  tags?: string[]
+  snapshot?: Record<string, unknown>
+}): Promise<ResearchRecord> {
+  const res = await fetch('/api/research/records', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error ?? `save research http ${res.status}`)
+  return json
+}
+
+export async function deleteResearchRecord(id: string): Promise<void> {
+  const res = await fetch(`/api/research/records?id=${encodeURIComponent(id)}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`delete research http ${res.status}`)
+}
+
+export async function compareResearchRevisions(
+  id: string,
+  from: number,
+  to: number,
+): Promise<Array<{ field: string; before: unknown; after: unknown }>> {
+  const params = new URLSearchParams({ id, from: String(from), to: String(to) })
+  const res = await fetch(`/api/research/compare?${params}`)
+  const json = await res.json()
+  if (!res.ok) throw new Error(json.error ?? `compare research http ${res.status}`)
+  return json.changes ?? []
 }
 
 /** 批量个股分析：技术指标 + 策略命中 + 舆情新闻 + 可选 AI 简报 */

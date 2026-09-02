@@ -19,6 +19,12 @@ import { runPortfolioBacktest } from './portfolio-backtest.ts'
 import { optimizeStrategy } from './strategy-optimizer.ts'
 import { fuseScreeningResults } from './fusion.ts'
 import {
+  compareResearchRevisions,
+  listResearchRecords,
+  removeResearchRecord,
+  saveResearchRecord,
+} from './research-dossiers.ts'
+import {
   applyOpinionAnalysis,
   getOpinionDocument,
   ingestOpinionDocument,
@@ -463,6 +469,74 @@ export function marketDataPlugin(): Plugin {
             sendJson(res, 200, result)
           } catch (e) {
             sendJson(res, 502, { error: String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/research/dossier') {
+          const code = (url.searchParams.get('code') ?? '').toLowerCase()
+          if (!/^(sh|sz|bj)\d{6}$/.test(code)) {
+            sendJson(res, 400, { error: '无效的股票代码' })
+            return
+          }
+          const records = listResearchRecords(code)
+          const opinionEvents = listOpinionDocuments({ limit: 1000 })
+            .flatMap((document) => document.claims
+              .filter((claim) => claim.code === code)
+              .map((claim) => ({
+                id: `${document.id}:${claim.id}`,
+                type: 'opinion' as const,
+                timestamp: document.publishedAt,
+                title: document.title,
+                summary: claim.thesis,
+                stance: claim.stance,
+                author: document.authorName,
+                sourceUrl: document.url,
+              })))
+          const researchEvents = records.flatMap((record) => record.revisions.map((revision) => ({
+            id: `${record.id}:${revision.version}`,
+            type: 'research' as const,
+            timestamp: revision.createdAt,
+            title: revision.title,
+            summary: revision.thesis,
+            stance: revision.stance,
+            recordId: record.id,
+            version: revision.version,
+          })))
+          sendJson(res, 200, {
+            code,
+            records,
+            timeline: [...opinionEvents, ...researchEvents].sort((a, b) => b.timestamp - a.timestamp),
+          })
+          return
+        }
+
+        if (path === '/api/research/records') {
+          try {
+            if (req.method === 'POST') {
+              sendJson(res, 200, saveResearchRecord(JSON.parse((await readBody(req)) || '{}')))
+            } else if (req.method === 'DELETE') {
+              sendJson(res, 200, { removed: removeResearchRecord(url.searchParams.get('id') ?? '') })
+            } else {
+              sendJson(res, 405, { error: 'method not allowed' })
+            }
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/research/compare') {
+          try {
+            sendJson(res, 200, {
+              changes: compareResearchRevisions(
+                url.searchParams.get('id') ?? '',
+                Number(url.searchParams.get('from')),
+                Number(url.searchParams.get('to')),
+              ),
+            })
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
           }
           return
         }
