@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { fetchDataCoverage, runBacktest, runPortfolioBacktest } from '../api'
+import { fetchDataCoverage, runBacktest, runPortfolioBacktest, syncLatestDailyKlines } from '../api'
 import type { BacktestResult, DataCoverageResponse, PortfolioBacktestResult, StrategyDefinition } from '../types'
 
 const props = defineProps<{
@@ -30,6 +30,8 @@ const error = ref('')
 const result = ref<BacktestResult | null>(null)
 const portfolioResult = ref<PortfolioBacktestResult | null>(null)
 const coverage = ref<DataCoverageResponse | null>(null)
+const syncingLatest = ref(false)
+const dataNotice = ref('')
 const backtestMode = ref<'event' | 'portfolio'>('event')
 const initialCapital = ref(1_000_000)
 const maxPositions = ref(10)
@@ -197,6 +199,29 @@ function parseCodes(): string[] {
     if (code && !result.includes(code)) result.push(code)
   }
   return result.slice(0, 50)
+}
+
+async function checkAndSyncLatest() {
+  const codes = parseCodes()
+  if (!codes.length) {
+    error.value = '请先输入需要检测的股票代码'
+    return
+  }
+  syncingLatest.value = true
+  error.value = ''
+  dataNotice.value = ''
+  try {
+    const synced = await syncLatestDailyKlines(codes)
+    coverage.value = await fetchDataCoverage(codes)
+    const summary = synced.summary
+    dataNotice.value = `检测 ${summary.total} 只：补齐 ${summary.synced}，已最新 ${summary.current}` +
+      `${summary.unavailable ? `，停牌或暂无新数据 ${summary.unavailable}` : ''}` +
+      `${summary.failed ? `，失败 ${summary.failed}` : ''}`
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    syncingLatest.value = false
+  }
 }
 
 async function run() {
@@ -378,11 +403,22 @@ const fmtPct = (value: number | undefined) =>
             <span>股票代码（空格、逗号或换行分隔，最多 50 只）</span>
             <textarea v-model="codesText" rows="3" placeholder="600519 000858 300750"></textarea>
           </label>
+          <div class="sl-data-check">
+            <button class="btn" :disabled="syncingLatest" @click="checkAndSyncLatest">
+              {{ syncingLatest ? '检测补齐中…' : '检测并补齐最新日K' }}
+            </button>
+            <span v-if="dataNotice">{{ dataNotice }}</span>
+          </div>
           <div v-if="coverage" class="sl-coverage">
             前复权日K缓存 {{ coverage.klines.filter(item => item.bars > 0).length }}/{{ coverage.klines.length }} 只；
             时点基本面快照 {{ coverage.pointInTimeSnapshots.length }} 日。
+            <span v-if="coverage.expectedDate">数据源最新完整交易日 {{ coverage.expectedDate }}；</span>
+            <span v-if="coverage.klines.some(item => item.status === 'stale')">
+              待补齐 {{ coverage.klines.filter(item => item.status === 'stale').length }} 只；
+            </span>
             <span v-if="coverage.klines.some(item => item.firstDate)">
-              最早 {{ coverage.klines.filter(item => item.firstDate).map(item => item.firstDate).sort()[0] }}
+              覆盖 {{ coverage.klines.filter(item => item.firstDate).map(item => item.firstDate).sort()[0] }}
+              至 {{ coverage.klines.filter(item => item.lastDate).map(item => item.lastDate).sort().at(-1) }}
             </span>
           </div>
 
@@ -497,6 +533,7 @@ const fmtPct = (value: number | undefined) =>
 .sl-config { padding: 16px; border-bottom: 1px solid var(--border); }
 .sl-label, .sl-codes > span { display: block; margin-bottom: 7px; color: var(--text-2); font-size: 12px; font-weight: 600; }
 .sl-coverage { margin: -7px 0 10px; color: var(--text-3); font-size: 10px; }
+.sl-data-check { display: flex; align-items: center; gap: 8px; margin: -7px 0 10px; color: var(--text-3); font-size: 10px; }
 .sl-mode-tabs { display: flex; gap: 6px; margin-bottom: 12px; }.sl-mode-tabs button { padding: 6px 14px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2); color: var(--text-2); cursor: pointer; }.sl-mode-tabs button.active { border-color: var(--primary); color: var(--primary); }
 .sl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .sl-chip {

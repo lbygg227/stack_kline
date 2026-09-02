@@ -5,6 +5,7 @@ import {
   applyOpinionAnalysis,
   finishOpinionSyncLog,
   ingestOpinionDocument,
+  listOpinionDocuments,
   listOpinionSubscriptions,
   markOpinionAnalysisFailed,
   prepareOpinionCollectionPolicy,
@@ -21,6 +22,8 @@ export interface OpinionSyncResult {
   analyzed: number
   failed: number
   attempts: number
+  activeTotal: number
+  message?: string
 }
 
 const running = new Map<string, Promise<OpinionSyncResult>>()
@@ -49,6 +52,7 @@ async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<
     analyzed: 0,
     failed: 0,
     attempts: 0,
+    activeTotal: 0,
   }
   try {
     let fetched: Awaited<ReturnType<typeof OPINION_ADAPTERS[typeof subscription.platform]['fetchLatest']>> | undefined
@@ -94,6 +98,15 @@ async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<
         result.failed++
       }
     }
+    result.activeTotal = listOpinionDocuments({ subscriptionId, limit: 500 }).length
+    result.message = fetched.documents.length === 0
+      ? result.activeTotal > 0
+        ? `没有新发言，当前已收录 ${result.activeTotal} 篇有效内容`
+        : subscription.platform === 'zhihu'
+          ? '知乎开放搜索未命中该作者的回答或文章；点赞、纯转载和其他作者内容已排除'
+          : '未发现原创发言；点赞和纯转发已排除'
+      : `本次获取 ${fetched.documents.length} 篇本人发言，当前共 ${result.activeTotal} 篇有效内容`
+    updateSubscriptionRuntime(subscriptionId, { lastNotice: result.message })
     finishOpinionSyncLog(log.id, { ...result, status: 'success', attempt: result.attempts })
     return result
   } catch (error) {
@@ -134,7 +147,10 @@ export class OpinionSyncScheduler {
     this.ticking = true
     try {
       const now = Date.now()
-      const due = listOpinionSubscriptions().filter((subscription) =>
+      const subscriptions = listOpinionSubscriptions().map((subscription) =>
+        prepareOpinionCollectionPolicy(subscription.id, OPINION_COLLECTION_POLICY_VERSION) ?? subscription,
+      )
+      const due = subscriptions.filter((subscription) =>
         subscription.enabled &&
         now - subscription.lastCheckedAt >= subscription.intervalMinutes * 60_000,
       )

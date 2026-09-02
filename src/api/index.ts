@@ -6,6 +6,7 @@ import type {
   DataCoverageResponse,
   FusionResult,
   KLineBar,
+  LatestKlineSyncResult,
   OpinionDocument,
   OpinionBacktestConfig,
   OpinionBacktestResult,
@@ -76,6 +77,19 @@ export async function fetchDataCoverage(codes: string[], period = 'day'): Promis
   const params = new URLSearchParams({ codes: codes.join(','), period })
   const res = await fetch(`/api/data/coverage?${params}`)
   if (!res.ok) throw new Error(`data coverage http ${res.status}`)
+  return await res.json()
+}
+
+export async function syncLatestDailyKlines(codes?: string[]): Promise<LatestKlineSyncResult> {
+  const res = await fetch('/api/data/kline/sync-latest', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(codes?.length ? { codes } : { scope: 'all' }),
+  })
+  if (!res.ok) {
+    const error = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(error?.error ?? `latest kline sync http ${res.status}`)
+  }
   return await res.json()
 }
 
@@ -403,6 +417,8 @@ export async function syncOpinionSubscription(id: string): Promise<{
   changed: number
   analyzed: number
   failed: number
+  activeTotal: number
+  message?: string
 }> {
   const res = await fetch('/api/opinions/sync', {
     method: 'POST',

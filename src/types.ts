@@ -10,6 +10,8 @@ export interface KLineBar {
 }
 
 export interface DataCoverageResponse {
+  expectedDate?: string
+  checkedAt: number
   klines: Array<{
     code: string
     period: string
@@ -18,6 +20,7 @@ export interface DataCoverageResponse {
     lastDate?: string
     fetchedAt?: number
     adjust: 'forward'
+    status: 'current' | 'stale' | 'missing'
   }>
   pointInTimeSnapshots: Array<{
     capturedAt: number
@@ -32,6 +35,26 @@ export interface DataCoverageResponse {
     fundamentalBacktestRequiresSnapshot: boolean
     unavailableHistorically: string[]
   }
+}
+
+export interface LatestKlineSyncResult {
+  expectedDate?: string
+  checkedAt: number
+  summary: {
+    total: number
+    current: number
+    synced: number
+    unavailable: number
+    failed: number
+  }
+  items: Array<{
+    code: string
+    status: 'current' | 'synced' | 'unavailable' | 'failed'
+    lastDateBefore?: string
+    lastDateAfter?: string
+    barsAdded: number
+    error?: string
+  }>
 }
 
 /** 股票/指数基础信息（code 为带市场前缀，如 sh600519） */
@@ -335,6 +358,7 @@ export interface OpinionSubscription {
   lastPostId?: string
   authStatus: 'ready' | 'missing' | 'expired' | 'error'
   lastError?: string
+  lastNotice?: string
   collectionPolicyVersion?: number
   createdAt: number
   updatedAt: number

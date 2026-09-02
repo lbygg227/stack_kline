@@ -123,7 +123,9 @@ async function sync(subscription: OpinionSubscription) {
   notice.value = ''
   try {
     const result = await syncOpinionSubscription(subscription.id)
-    notice.value = `同步完成：获取 ${result.fetched} 篇，新增 ${result.created} 篇，分析 ${result.analyzed} 篇`
+    notice.value = result.message
+      ? `${result.message}；新增 ${result.created} 篇，分析 ${result.analyzed} 篇`
+      : `同步完成：获取 ${result.fetched} 篇，新增 ${result.created} 篇，分析 ${result.analyzed} 篇`
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -255,6 +257,9 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
             </div>
             <div v-if="subscription.lastError" class="op-sub-error" :title="subscription.lastError">
               {{ subscription.lastError }}
+            </div>
+            <div v-else-if="subscription.lastNotice" class="op-sub-notice" :title="subscription.lastNotice">
+              {{ subscription.lastNotice }}
             </div>
             <div class="op-sub-actions">
               <button class="btn" :disabled="syncingId === subscription.id" @click="sync(subscription)">
@@ -400,6 +405,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-sub-top > span { margin-left: auto; font-size: 10px; }
 .status-ready { color: var(--up); }.status-missing, .status-expired { color: #d99000; }.status-error { color: var(--down); }
 .op-sub-error { margin-top: 5px; overflow: hidden; color: var(--down); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.op-sub-notice { margin-top: 5px; color: var(--text-3); font-size: 10px; line-height: 1.4; }
 .op-log { padding: 7px 0; border-top: 1px solid var(--border); }.op-log:first-of-type { border-top: 0; }.op-log > div { display: flex; justify-content: space-between; }.op-log small { display: block; margin-top: 3px; color: var(--text-3); }
 .op-sub-actions { margin-top: 7px; }.op-sub-actions .btn { font-size: 10px; }.danger { color: var(--down); }
 .op-check { flex-direction: row !important; align-items: center; }.op-check input { width: auto; }

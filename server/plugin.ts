@@ -6,7 +6,12 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { listPointInTimeSnapshots, service } from './service.ts'
-import { getKlineCoverage, getKlineWithCache } from './tencent.ts'
+import {
+  getExpectedLatestTradingDate,
+  getKlineCoverage,
+  getKlineWithCache,
+  syncLatestDailyKlines,
+} from './tencent.ts'
 import { extractOpinionDocument, generateStockBrief, parseNaturalLanguage } from './deepseek.ts'
 import { type StrategyConditions } from './strategy.ts'
 import { SCREENING_STRATEGIES, buildIndustryStats, evaluateStrategies } from './screening-strategies.ts'
@@ -181,8 +186,11 @@ export function marketDataPlugin(): Plugin {
             .map((code) => code.trim().toLowerCase())
             .filter((code) => /^(sh|sz|bj)\d{6}$/.test(code))
             .slice(0, 100)
+          const expectedDate = await getExpectedLatestTradingDate()
           sendJson(res, 200, {
-            klines: getKlineCoverage(codes, url.searchParams.get('period') || 'day'),
+            expectedDate,
+            checkedAt: Date.now(),
+            klines: getKlineCoverage(codes, url.searchParams.get('period') || 'day', expectedDate),
             pointInTimeSnapshots: listPointInTimeSnapshots(Number(url.searchParams.get('limit')) || 100),
             constraints: {
               klineAdjust: 'forward',
@@ -190,6 +198,23 @@ export function marketDataPlugin(): Plugin {
               unavailableHistorically: ['ST状态', '上市初期涨跌停规则', '退市股票完整样本', '历史行业成分调整'],
             },
           })
+          return
+        }
+
+        if (path === '/api/data/kline/sync-latest' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { codes?: string[]; scope?: 'all' }
+            const codes = body.scope === 'all'
+              ? (service.getSnapshotState()?.stocks ?? []).map((stock) => stock.code)
+              : Array.isArray(body.codes) ? body.codes : []
+            if (!codes.length) {
+              sendJson(res, 400, { error: '请提供需要检测的股票代码，或先获取全市场快照' })
+              return
+            }
+            sendJson(res, 200, await syncLatestDailyKlines(codes))
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
           return
         }
 

@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
 import type { PrefetchProgress, SnapshotStock, UpdateStatus } from '../types'
-import { fetchSnapshot, getPrefetchProgress, getUpdateStatus, runUpdate, startPrefetch } from '../api'
+import {
+  fetchSnapshot,
+  getPrefetchProgress,
+  getUpdateStatus,
+  runUpdate,
+  startPrefetch,
+  syncLatestDailyKlines,
+} from '../api'
 import { useMarket } from '../composables/useMarket'
 import { usePullRefresh } from '../composables/usePullRefresh'
 import { SW1_INDUSTRIES } from '../data/stocks'
@@ -19,6 +26,8 @@ const sortKey = ref<'code' | 'name' | 'price' | 'changePct' | 'amount' | 'turnov
 const asc = ref(false)
 const renderCount = ref(300)
 const prefetchProg = ref<PrefetchProgress>({ running: false, done: 0, total: 0, failed: 0 })
+const latestBusy = ref(false)
+const latestResult = ref('')
 
 let pollTimer: number | undefined
 const sheetMode = ref<'industry' | 'sort' | null>(null)
@@ -86,6 +95,24 @@ async function doPrefetch() {
   if (prefetchProg.value.running) return
   await startPrefetch('day')
   pollPrefetch()
+}
+
+async function syncAllLatest() {
+  if (latestBusy.value) return
+  latestBusy.value = true
+  latestResult.value = ''
+  error.value = ''
+  try {
+    const result = await syncLatestDailyKlines()
+    const summary = result.summary
+    latestResult.value = `最新完整交易日 ${result.expectedDate ?? '未知'}：补齐 ${summary.synced}，已最新 ${summary.current}` +
+      `${summary.unavailable ? `，停牌或暂无数据 ${summary.unavailable}` : ''}` +
+      `${summary.failed ? `，失败 ${summary.failed}` : ''}`
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    latestBusy.value = false
+  }
 }
 
 async function pollPrefetch() {
@@ -210,6 +237,9 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
       <button class="btn" @click="doPrefetch" :disabled="prefetchProg.running">
         {{ prefetchProg.running ? '预取中…' : '全量预取日K' }}
       </button>
+      <button class="btn" @click="syncAllLatest" :disabled="latestBusy || status !== 'ready'">
+        {{ latestBusy ? '检测补齐中…' : '检测并补齐最新日K' }}
+      </button>
       <div v-if="prefetchProg.running" class="am-progress">
         <div class="am-progress-bar" :style="{ width: pct(prefetchProg) }"></div>
         <span class="am-progress-text num">
@@ -222,6 +252,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
       </span>
       <span v-else class="am-hint">预取后策略/浏览不依赖网络</span>
     </div>
+    <div v-if="latestResult" class="am-update-result">{{ latestResult }}</div>
 
     <div class="am-update">
       <span class="am-update-label">⏰ 每日自动更新</span>

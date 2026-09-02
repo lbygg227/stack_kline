@@ -22,6 +22,7 @@ export interface OpinionSubscription {
   lastPostId?: string
   authStatus: 'ready' | 'missing' | 'expired' | 'error'
   lastError?: string
+  lastNotice?: string
   collectionPolicyVersion?: number
   createdAt: number
   updatedAt: number
@@ -237,7 +238,7 @@ export function removeOpinionSubscription(id: string): boolean {
 
 export function updateSubscriptionRuntime(
   id: string,
-  patch: Partial<Pick<OpinionSubscription, 'platformUserId' | 'nickname' | 'profileUrl' | 'lastCheckedAt' | 'lastPostId' | 'authStatus' | 'lastError' | 'collectionPolicyVersion'>>,
+  patch: Partial<Pick<OpinionSubscription, 'platformUserId' | 'nickname' | 'profileUrl' | 'lastCheckedAt' | 'lastPostId' | 'authStatus' | 'lastError' | 'lastNotice' | 'collectionPolicyVersion'>>,
 ): OpinionSubscription | null {
   const item = state.subscriptions.find((subscription) => subscription.id === id)
   if (!item) return null
@@ -257,6 +258,7 @@ export function prepareOpinionCollectionPolicy(id: string, version: number): Opi
   }
   subscription.collectionPolicyVersion = version
   subscription.lastPostId = undefined
+  subscription.lastCheckedAt = 0
   subscription.updatedAt = now
   persist()
   return subscription
