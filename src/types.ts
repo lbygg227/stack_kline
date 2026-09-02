@@ -475,6 +475,22 @@ export interface StrategyResult {
   strategies?: string[]
 }
 
+export interface FusionResult {
+  code: string
+  name: string
+  price: number
+  changePct: number
+  fusionScore: number
+  technicalScore: number
+  opinionScore?: number
+  opinionConfidence?: number
+  recommendation: 'recommend' | 'observe' | 'avoid'
+  strategies: string[]
+  authors: string[]
+  reasons: string[]
+  risks: string[]
+}
+
 export interface AiStrategyResponse {
   conditions: StrategyConditions
   explanation: string

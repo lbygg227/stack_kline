@@ -7,6 +7,7 @@ import { SW1_INDUSTRIES } from '../data/stocks'
 import BatchAnalysisPanel from './BatchAnalysisPanel.vue'
 import StrategyLab from './StrategyLab.vue'
 import StrategyOptimizer from './StrategyOptimizer.vue'
+import FusionPanel from './FusionPanel.vue'
 
 const { state, selectStock, setView, setMobileTab, isMobile, watchlist } = useMarket()
 
@@ -57,6 +58,7 @@ const resultListRef = ref<HTMLDivElement | null>(null)
 const showBatch = ref(false)
 const showStrategyLab = ref(false)
 const showOptimizer = ref(false)
+const showFusion = ref(false)
 const backtestDefaultCodes = computed(() => {
   const codes = watchlist.value.map((stock) => stock.code)
   return codes.length ? codes : [state.currentCode]
@@ -205,6 +207,7 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
       <div class="sp-header-actions">
         <button class="btn" @click="showStrategyLab = true">策略实验室</button>
         <button class="btn" @click="showOptimizer = true">参数优化</button>
+        <button class="btn" @click="showFusion = true">融合选股</button>
         <button class="btn" @click="showBatch = true">批量分析</button>
       </div>
     </div>
@@ -222,6 +225,11 @@ const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
       :strategies="strategyDefinitions"
       :default-codes="backtestDefaultCodes"
       @close="showOptimizer = false"
+    />
+    <FusionPanel
+      v-if="showFusion"
+      :conditions="conditions"
+      @close="showFusion = false"
     />
 
     <div class="sp-main">

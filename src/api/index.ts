@@ -3,6 +3,7 @@ import type {
   BacktestConfig,
   BacktestResult,
   BatchAnalysisResponse,
+  FusionResult,
   KLineBar,
   OpinionDocument,
   OpinionBacktestConfig,
@@ -97,6 +98,28 @@ export async function runStrategy(conds: StrategyConditions): Promise<StrategyRe
   }
   const json = (await res.json()) as { results: StrategyResult[] }
   return json.results ?? []
+}
+
+export async function runFusionScreen(
+  conditions: StrategyConditions,
+  opinion: {
+    platform?: OpinionPlatform
+    opinionRequired?: boolean
+    minOpinionScore?: number
+    technicalWeight?: number
+    opinionWeight?: number
+  },
+): Promise<{ results: FusionResult[]; technicalCount: number; opinionSignalCount: number }> {
+  const res = await fetch('/api/fusion/screen', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ conditions, opinion }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `fusion screen http ${res.status}`)
+  }
+  return await res.json()
 }
 
 /** 服务端统一策略目录，前端与 AI 使用同一份元数据 */

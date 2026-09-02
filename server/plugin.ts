@@ -17,6 +17,7 @@ import { searchStockNews } from './news.ts'
 import { runBacktest } from './backtest.ts'
 import { runPortfolioBacktest } from './portfolio-backtest.ts'
 import { optimizeStrategy } from './strategy-optimizer.ts'
+import { fuseScreeningResults } from './fusion.ts'
 import {
   applyOpinionAnalysis,
   getOpinionDocument,
@@ -214,6 +215,50 @@ export function marketDataPlugin(): Plugin {
             sendJson(res, 200, { results })
           } catch (e) {
             sendJson(res, 500, { error: String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/fusion/screen') {
+          const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+          if (!snap) {
+            sendJson(res, 409, { error: '快照尚未就绪，请稍候重试' })
+            return
+          }
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as {
+              conditions?: Partial<StrategyConditions>
+              opinion?: {
+                platform?: OpinionPlatform
+                opinionRequired?: boolean
+                minOpinionScore?: number
+                technicalWeight?: number
+                opinionWeight?: number
+              }
+            }
+            const conditions = normalizeConditions(body.conditions ?? {})
+            const technical = await service.runStrategy(
+              service.stocksWithIndustry(),
+              conditions,
+              (code) => getKlineWithCache(code, 'day', 160),
+            )
+            const platform = body.opinion?.platform === 'zhihu' || body.opinion?.platform === 'xueqiu'
+              ? body.opinion.platform
+              : undefined
+            const signals = buildOpinionSignals(
+              listOpinionDocuments({ platform, limit: 500 }),
+              { platform },
+            )
+            sendJson(res, 200, {
+              results: fuseScreeningResults(technical, signals, {
+                ...body.opinion,
+                platform,
+              }),
+              technicalCount: technical.length,
+              opinionSignalCount: signals.length,
+            })
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
           }
           return
         }
