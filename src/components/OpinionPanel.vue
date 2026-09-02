@@ -332,6 +332,11 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
         <article v-for="document in documents" :key="document.id" class="op-card op-document">
           <div class="op-doc-meta">
             <b>{{ document.authorName }}</b>
+            <span v-if="document.contentKind === 'original'" class="op-kind">原创</span>
+            <span v-else-if="document.contentKind === 'commentary_repost'" class="op-kind">
+              转评{{ document.originalAuthor ? ` · 原作者 ${document.originalAuthor}` : '' }}
+            </span>
+            <span v-else-if="document.contentKind === 'manual'" class="op-kind">手动导入</span>
             <span>{{ formatTime(document.publishedAt) }}</span>
             <span>v{{ document.versions.length }}</span>
             <a v-if="document.url" :href="document.url" target="_blank" rel="noreferrer">原文 ↗</a>
@@ -406,6 +411,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-empty { padding: 24px; text-align: center; color: var(--text-3); }
 .op-document h3 { margin-top: 8px; font-size: 15px; }
 .op-doc-meta { color: var(--text-3); font-size: 10px; }.op-doc-meta b { color: var(--text-2); font-size: 12px; }.op-doc-meta a { margin-left: auto; color: var(--primary); }
+.op-kind { padding: 1px 4px; border: 1px solid var(--border); border-radius: 3px; color: var(--primary); }
 .op-summary, .op-excerpt { margin: 8px 0; color: var(--text-2); font-size: 12px; line-height: 1.65; }
 .op-excerpt { color: var(--text-3); }
 .op-claims { display: grid; gap: 8px; margin-top: 10px; }

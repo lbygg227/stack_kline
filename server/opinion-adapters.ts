@@ -33,66 +33,116 @@ const numberTime = (value: unknown): number => {
   return parsed < 1e12 ? parsed * 1000 : parsed
 }
 
+export const OPINION_COLLECTION_POLICY_VERSION = 2
+
+const isExplicitRepost = (title: string): boolean =>
+  /(^|[【\[\s])转载(?:自|[:：\]】\s])|转自[:：]/i.test(title)
+
+export function normalizeXueqiuStatus(
+  status: Record<string, unknown>,
+  expectedUserId: string,
+): { content: string; contentKind: 'original' | 'commentary_repost'; originalAuthor?: string } | null {
+  if (Number(status.mark) === 1) return null
+  const user = status.user && typeof status.user === 'object'
+    ? status.user as Record<string, unknown>
+    : {}
+  const actualUserId = String(user.id ?? user.user_id ?? '')
+  if (actualUserId && actualUserId !== expectedUserId) return null
+  const content = stripHtml(status.text ?? status.description)
+  const retweeted = status.retweeted_status && typeof status.retweeted_status === 'object'
+    ? status.retweeted_status as Record<string, unknown>
+    : undefined
+  if (!retweeted) return content ? { content, contentKind: 'original' } : null
+  if (!content || /^(转发|转发微博|分享|分享图片|分享链接|同感)[。！!～~\s]*$/u.test(content)) return null
+  const originalUser = retweeted.user && typeof retweeted.user === 'object'
+    ? retweeted.user as Record<string, unknown>
+    : {}
+  return {
+    content,
+    contentKind: 'commentary_repost',
+    originalAuthor: String(originalUser.screen_name ?? originalUser.name ?? '').trim() || undefined,
+  }
+}
+
 class ZhihuAdapter implements OpinionSourceAdapter {
   platform = 'zhihu' as const
 
   async fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult> {
+    const token = subscription.platformUserId || subscription.profileUrl.match(/\/people\/([^/?#]+)/)?.[1] || ''
+    if (!token) throw new Error('知乎订阅缺少主页用户标识')
+    const headers = {
+      Accept: 'application/json',
+      'User-Agent': 'Mozilla/5.0',
+    }
+    const memberRes = await fetch(`https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}`, { headers })
+    if (!memberRes.ok) throw new Error(`知乎用户信息 ${memberRes.status}`)
+    const member = await memberRes.json() as Record<string, unknown>
+    const nickname = String(member.name ?? subscription.nickname).trim()
+    const memberId = String(member.id ?? '')
+    if (!nickname || !memberId) throw new Error('知乎用户信息不完整，无法确认内容作者')
+
     const secret = process.env.ZHIHU_ACCESS_SECRET?.trim()
     if (!secret) throw new Error('缺少 ZHIHU_ACCESS_SECRET，无法调用知乎开放平台')
-    const query = subscription.nickname || subscription.platformUserId
-    if (!query) throw new Error('知乎订阅缺少昵称或用户 ID')
-    const url = new URL('https://developer.zhihu.com/api/v1/content/zhihu_search')
-    url.searchParams.set('Query', query)
-    url.searchParams.set('Count', '20')
-    url.searchParams.set('SearchDB', 'realtime')
-    const res = await fetch(url, {
+    const searchUrl = new URL('https://developer.zhihu.com/api/v1/content/zhihu_search')
+    searchUrl.searchParams.set('Query', nickname)
+    searchUrl.searchParams.set('Count', '10')
+    searchUrl.searchParams.set('SearchDB', 'realtime')
+    const searchRes = await fetch(searchUrl, {
       headers: {
         Authorization: `Bearer ${secret}`,
         'X-Request-Timestamp': String(Math.floor(Date.now() / 1000)),
         'Content-Type': 'application/json',
       },
     })
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`知乎开放平台 ${res.status}: ${text.slice(0, 160)}`)
+    if (!searchRes.ok) {
+      const text = await searchRes.text().catch(() => '')
+      throw new Error(`知乎开放平台 ${searchRes.status}: ${text.slice(0, 160)}`)
     }
-    const json = await res.json() as Record<string, unknown>
-    const payload = (json.data ?? json.Data ?? json) as Record<string, unknown> | unknown[]
+    const searchJson = await searchRes.json() as Record<string, unknown>
+    const payload = (searchJson.data ?? searchJson.Data ?? searchJson) as Record<string, unknown> | unknown[]
     const candidates = Array.isArray(payload)
       ? payload
       : (payload.items ?? payload.Items ?? payload.results ?? payload.Results ?? [])
     const items = Array.isArray(candidates) ? candidates as Array<Record<string, unknown>> : []
-    const expectedName = subscription.nickname.trim()
-    const matched = items.filter((item) => {
-      const author = typeof item.author === 'object' && item.author
+    const documents = items.flatMap<OpinionDocumentInput>((item) => {
+      const author = item.author && typeof item.author === 'object'
         ? item.author as Record<string, unknown>
-        : undefined
-      const authorName = String(item.AuthorName ?? item.author_name ?? author?.name ?? '').trim()
-      return !expectedName || authorName === expectedName
-    })
+        : {}
+      const authorName = String(item.AuthorName ?? item.author_name ?? author.name ?? '').trim()
+      const contentType = String(item.ContentType ?? item.content_type ?? '').toLowerCase()
+      const rawId = String(item.ContentID ?? item.content_id ?? item.id ?? '')
+      const platformPostId = `${contentType}:${rawId}`
+      const title = String(item.Title ?? item.title ?? `${nickname}的内容`)
+      if (
+        authorName !== nickname ||
+        !['answer', 'article'].includes(contentType) ||
+        !rawId ||
+        isExplicitRepost(title)
+      ) return []
+      return [{
+        subscriptionId: subscription.id,
+        platform: this.platform,
+        platformPostId,
+        authorId: memberId,
+        authorName: nickname,
+        profileUrl: `https://www.zhihu.com/people/${token}`,
+        url: String(item.Url ?? item.url ?? ''),
+        title,
+        content: stripHtml(item.ContentText ?? item.content_text ?? item.description),
+        publishedAt: numberTime(item.EditTime ?? item.edit_time ?? item.updated_at),
+        contentKind: 'original',
+        collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
+      }]
+    }).filter((item) => item.content)
+    documents.sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
     const lastPostIndex = subscription.lastPostId
-      ? matched.findIndex((item) =>
-          String(item.ContentID ?? item.content_id ?? item.id ?? '') === subscription.lastPostId)
+      ? documents.findIndex((document) => document.platformPostId === subscription.lastPostId)
       : -1
-    const fresh = lastPostIndex >= 0 ? matched.slice(0, lastPostIndex) : matched
     return {
-      documents: fresh.map((item) => {
-        const contentType = String(item.ContentType ?? item.content_type ?? '')
-        const platformPostId = String(item.ContentID ?? item.content_id ?? item.id ?? '')
-        const authorName = String(item.AuthorName ?? item.author_name ?? expectedName)
-        return {
-          subscriptionId: subscription.id,
-          platform: this.platform,
-          platformPostId,
-          authorId: subscription.platformUserId,
-          authorName,
-          profileUrl: subscription.profileUrl,
-          url: String(item.Url ?? item.url ?? ''),
-          title: String(item.Title ?? item.title ?? `${authorName}的${contentType || '内容'}`),
-          content: stripHtml(item.ContentText ?? item.content_text ?? item.description),
-          publishedAt: numberTime(item.EditTime ?? item.edit_time ?? item.updated_at),
-        }
-      }).filter((item) => item.content),
+      documents: lastPostIndex >= 0 ? documents.slice(0, lastPostIndex) : documents,
+      platformUserId: token,
+      nickname,
+      profileUrl: `https://www.zhihu.com/people/${token}`,
     }
   }
 }
@@ -197,10 +247,12 @@ class XueqiuAdapter implements OpinionSourceAdapter {
       platformUserId: user.userId,
       nickname: user.nickname,
       profileUrl: user.profileUrl,
-      documents: completed.map((status) => {
+      documents: completed.flatMap((status) => {
         const statusId = String(status.id ?? status.status_id ?? '')
         const rawUser = status.user as Record<string, unknown> | undefined
-        return {
+        const normalized = normalizeXueqiuStatus(status, user.userId)
+        if (!normalized || !statusId) return []
+        return [{
           subscriptionId: subscription.id,
           platform: this.platform,
           platformPostId: statusId,
@@ -209,10 +261,13 @@ class XueqiuAdapter implements OpinionSourceAdapter {
           profileUrl: user.profileUrl,
           url: String(status.target ? `https://xueqiu.com${status.target}` : `https://xueqiu.com/${user.userId}/${statusId}`),
           title: stripHtml(status.title) || stripHtml(status.description).slice(0, 50) || `${user.nickname}的动态`,
-          content: stripHtml(status.text ?? status.description),
+          content: normalized.content,
           publishedAt: numberTime(status.created_at ?? status.updated_at),
-        }
-      }).filter((item) => item.content),
+          contentKind: normalized.contentKind,
+          originalAuthor: normalized.originalAuthor,
+          collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
+        }]
+      }),
     }
   }
 }

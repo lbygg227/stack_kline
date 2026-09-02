@@ -335,6 +335,7 @@ export interface OpinionSubscription {
   lastPostId?: string
   authStatus: 'ready' | 'missing' | 'expired' | 'error'
   lastError?: string
+  collectionPolicyVersion?: number
   createdAt: number
   updatedAt: number
 }
@@ -400,6 +401,8 @@ export interface OpinionDocument {
   claims: OpinionClaim[]
   analysisModel?: string
   analysisError?: string
+  contentKind?: 'original' | 'commentary_repost' | 'manual'
+  originalAuthor?: string
 }
 
 export interface OpinionSignalEvidence {

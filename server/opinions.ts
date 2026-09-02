@@ -22,6 +22,7 @@ export interface OpinionSubscription {
   lastPostId?: string
   authStatus: 'ready' | 'missing' | 'expired' | 'error'
   lastError?: string
+  collectionPolicyVersion?: number
   createdAt: number
   updatedAt: number
 }
@@ -70,6 +71,11 @@ export interface OpinionDocument {
   claims: OpinionClaim[]
   analysisModel?: string
   analysisError?: string
+  contentKind?: 'original' | 'commentary_repost' | 'manual'
+  originalAuthor?: string
+  collectionPolicyVersion?: number
+  excludedAt?: number
+  exclusionReason?: string
 }
 
 export interface OpinionDocumentInput {
@@ -83,6 +89,9 @@ export interface OpinionDocumentInput {
   title?: string
   content: string
   publishedAt?: number
+  contentKind?: 'original' | 'commentary_repost' | 'manual'
+  originalAuthor?: string
+  collectionPolicyVersion?: number
 }
 
 export interface OpinionSyncLog {
@@ -228,13 +237,29 @@ export function removeOpinionSubscription(id: string): boolean {
 
 export function updateSubscriptionRuntime(
   id: string,
-  patch: Partial<Pick<OpinionSubscription, 'platformUserId' | 'nickname' | 'profileUrl' | 'lastCheckedAt' | 'lastPostId' | 'authStatus' | 'lastError'>>,
+  patch: Partial<Pick<OpinionSubscription, 'platformUserId' | 'nickname' | 'profileUrl' | 'lastCheckedAt' | 'lastPostId' | 'authStatus' | 'lastError' | 'collectionPolicyVersion'>>,
 ): OpinionSubscription | null {
   const item = state.subscriptions.find((subscription) => subscription.id === id)
   if (!item) return null
   Object.assign(item, patch, { updatedAt: Date.now() })
   persist()
   return item
+}
+
+export function prepareOpinionCollectionPolicy(id: string, version: number): OpinionSubscription | null {
+  const subscription = state.subscriptions.find((item) => item.id === id)
+  if (!subscription || (subscription.collectionPolicyVersion ?? 1) >= version) return subscription ?? null
+  const now = Date.now()
+  for (const document of state.documents) {
+    if (document.subscriptionId !== id || document.collectionPolicyVersion === version) continue
+    document.excludedAt = now
+    document.exclusionReason = '旧采集口径无法确认是博主本人原创发言'
+  }
+  subscription.collectionPolicyVersion = version
+  subscription.lastPostId = undefined
+  subscription.updatedAt = now
+  persist()
+  return subscription
 }
 
 export function ingestOpinionDocument(input: OpinionDocumentInput): {
@@ -252,7 +277,21 @@ export function ingestOpinionDocument(input: OpinionDocumentInput): {
     (input.url && document.url === input.url),
   )
   if (existing) {
-    if (existing.contentHash === contentHash) return { document: existing, created: false, changed: false }
+    const metadataChanged = Boolean(
+      existing.excludedAt ||
+      existing.contentKind !== (input.contentKind ?? existing.contentKind) ||
+      existing.originalAuthor !== input.originalAuthor ||
+      existing.collectionPolicyVersion !== input.collectionPolicyVersion,
+    )
+    existing.contentKind = input.contentKind ?? existing.contentKind
+    existing.originalAuthor = input.originalAuthor
+    existing.collectionPolicyVersion = input.collectionPolicyVersion
+    existing.excludedAt = undefined
+    existing.exclusionReason = undefined
+    if (existing.contentHash === contentHash) {
+      if (metadataChanged) persist()
+      return { document: existing, created: false, changed: false }
+    }
     existing.versions.push({
       version: existing.versions.length + 1,
       capturedAt: now,
@@ -293,6 +332,9 @@ export function ingestOpinionDocument(input: OpinionDocumentInput): {
     versions: [{ version: 1, capturedAt: now, contentHash, title, content }],
     status: 'pending',
     claims: [],
+    contentKind: input.contentKind ?? (input.subscriptionId ? 'original' : 'manual'),
+    originalAuthor: input.originalAuthor,
+    collectionPolicyVersion: input.collectionPolicyVersion,
   }
   state.documents.push(document)
   persist()
@@ -304,8 +346,10 @@ export function listOpinionDocuments(filters: {
   subscriptionId?: string
   code?: string
   limit?: number
+  includeExcluded?: boolean
 } = {}): OpinionDocument[] {
   return state.documents
+    .filter((document) => filters.includeExcluded || !document.excludedAt)
     .filter((document) => !filters.platform || document.platform === filters.platform)
     .filter((document) => !filters.subscriptionId || document.subscriptionId === filters.subscriptionId)
     .filter((document) => !filters.code || document.claims.some((claim) => claim.code === filters.code))

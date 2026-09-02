@@ -1,12 +1,13 @@
 import type { SnapshotStock } from './eastmoney.ts'
 import { extractOpinionDocument } from './deepseek.ts'
-import { OPINION_ADAPTERS } from './opinion-adapters.ts'
+import { OPINION_ADAPTERS, OPINION_COLLECTION_POLICY_VERSION } from './opinion-adapters.ts'
 import {
   applyOpinionAnalysis,
   finishOpinionSyncLog,
   ingestOpinionDocument,
   listOpinionSubscriptions,
   markOpinionAnalysisFailed,
+  prepareOpinionCollectionPolicy,
   resolveOpinionClaims,
   startOpinionSyncLog,
   updateSubscriptionRuntime,
@@ -36,8 +37,9 @@ export function syncOpinionSubscription(
 }
 
 async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<OpinionSyncResult> {
-  const subscription = listOpinionSubscriptions().find((item) => item.id === subscriptionId)
-  if (!subscription) throw new Error('观点订阅不存在')
+  const found = listOpinionSubscriptions().find((item) => item.id === subscriptionId)
+  if (!found) throw new Error('观点订阅不存在')
+  const subscription = prepareOpinionCollectionPolicy(subscriptionId, OPINION_COLLECTION_POLICY_VERSION) ?? found
   const log = startOpinionSyncLog(subscription)
   const result: OpinionSyncResult = {
     subscriptionId,
