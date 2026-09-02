@@ -223,6 +223,23 @@ export interface OpinionSubscription {
   updatedAt: number
 }
 
+export interface OpinionSyncLog {
+  id: string
+  subscriptionId: string
+  platform: OpinionPlatform
+  authorName: string
+  startedAt: number
+  finishedAt?: number
+  status: 'running' | 'success' | 'failed'
+  attempt: number
+  fetched: number
+  created: number
+  changed: number
+  analyzed: number
+  failed: number
+  error?: string
+}
+
 export interface OpinionClaim {
   id: string
   code?: string

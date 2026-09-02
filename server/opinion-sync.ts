@@ -3,10 +3,12 @@ import { extractOpinionDocument } from './deepseek.ts'
 import { OPINION_ADAPTERS } from './opinion-adapters.ts'
 import {
   applyOpinionAnalysis,
+  finishOpinionSyncLog,
   ingestOpinionDocument,
   listOpinionSubscriptions,
   markOpinionAnalysisFailed,
   resolveOpinionClaims,
+  startOpinionSyncLog,
   updateSubscriptionRuntime,
 } from './opinions.ts'
 
@@ -17,6 +19,7 @@ export interface OpinionSyncResult {
   changed: number
   analyzed: number
   failed: number
+  attempts: number
 }
 
 const running = new Map<string, Promise<OpinionSyncResult>>()
@@ -35,6 +38,7 @@ export function syncOpinionSubscription(
 async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<OpinionSyncResult> {
   const subscription = listOpinionSubscriptions().find((item) => item.id === subscriptionId)
   if (!subscription) throw new Error('观点订阅不存在')
+  const log = startOpinionSyncLog(subscription)
   const result: OpinionSyncResult = {
     subscriptionId,
     fetched: 0,
@@ -42,9 +46,24 @@ async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<
     changed: 0,
     analyzed: 0,
     failed: 0,
+    attempts: 0,
   }
   try {
-    const fetched = await OPINION_ADAPTERS[subscription.platform].fetchLatest(subscription)
+    let fetched: Awaited<ReturnType<typeof OPINION_ADAPTERS[typeof subscription.platform]['fetchLatest']>> | undefined
+    let lastError: unknown
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      result.attempts = attempt
+      try {
+        fetched = await OPINION_ADAPTERS[subscription.platform].fetchLatest(subscription)
+        break
+      } catch (error) {
+        lastError = error
+        const message = error instanceof Error ? error.message : String(error)
+        if (message.includes('缺少') || message.includes('401') || message.includes('403')) break
+        if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, attempt * 500))
+      }
+    }
+    if (!fetched) throw lastError ?? new Error('平台未返回内容')
     result.fetched = fetched.documents.length
     const newestPostId = fetched.documents
       .sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))[0]
@@ -73,6 +92,7 @@ async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<
         result.failed++
       }
     }
+    finishOpinionSyncLog(log.id, { ...result, status: 'success', attempt: result.attempts })
     return result
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -80,6 +100,12 @@ async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<
       lastCheckedAt: Date.now(),
       authStatus: message.includes('缺少') ? 'missing' : message.includes('登录') ? 'expired' : 'error',
       lastError: message,
+    })
+    finishOpinionSyncLog(log.id, {
+      ...result,
+      status: 'failed',
+      attempt: result.attempts,
+      error: message,
     })
     throw error
   }

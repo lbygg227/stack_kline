@@ -70,8 +70,13 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       const authorName = String(item.AuthorName ?? item.author_name ?? author?.name ?? '').trim()
       return !expectedName || authorName === expectedName
     })
+    const lastPostIndex = subscription.lastPostId
+      ? matched.findIndex((item) =>
+          String(item.ContentID ?? item.content_id ?? item.id ?? '') === subscription.lastPostId)
+      : -1
+    const fresh = lastPostIndex >= 0 ? matched.slice(0, lastPostIndex) : matched
     return {
-      documents: matched.map((item) => {
+      documents: fresh.map((item) => {
         const contentType = String(item.ContentType ?? item.content_type ?? '')
         const platformPostId = String(item.ContentID ?? item.content_id ?? item.id ?? '')
         const authorName = String(item.AuthorName ?? item.author_name ?? expectedName)
@@ -145,25 +150,54 @@ class XueqiuAdapter implements OpinionSourceAdapter {
 
   async fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult> {
     const user = await this.resolveUser(subscription)
-    const url = new URL('https://api.xueqiu.com/v4/statuses/user_timeline.json')
-    url.searchParams.set('user_id', user.userId)
-    url.searchParams.set('type', '0')
-    url.searchParams.set('page', '1')
-    url.searchParams.set('count', '20')
-    const res = await fetch(url, { headers: this.headers(user.profileUrl) })
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      throw new Error(`雪球时间线 ${res.status}: ${text.slice(0, 160)}`)
+    const statuses: Array<Record<string, unknown>> = []
+    let reachedLastPost = false
+    for (let page = 1; page <= 3 && !reachedLastPost; page++) {
+      const url = new URL('https://api.xueqiu.com/v4/statuses/user_timeline.json')
+      url.searchParams.set('user_id', user.userId)
+      url.searchParams.set('type', '0')
+      url.searchParams.set('page', String(page))
+      url.searchParams.set('count', '20')
+      const res = await fetch(url, { headers: this.headers(user.profileUrl) })
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        throw new Error(`雪球时间线 ${res.status}: ${text.slice(0, 160)}`)
+      }
+      const json = await res.json() as Record<string, unknown>
+      if (json.error_code) throw new Error(String(json.error_description ?? `雪球错误 ${json.error_code}`))
+      const rawStatuses = json.statuses ?? json.list ?? []
+      const pageItems = Array.isArray(rawStatuses) ? rawStatuses as Array<Record<string, unknown>> : []
+      for (const status of pageItems) {
+        const statusId = String(status.id ?? status.status_id ?? '')
+        if (subscription.lastPostId && statusId === subscription.lastPostId) {
+          reachedLastPost = true
+          break
+        }
+        statuses.push(status)
+      }
+      if (pageItems.length < 20) break
     }
-    const json = await res.json() as Record<string, unknown>
-    if (json.error_code) throw new Error(String(json.error_description ?? `雪球错误 ${json.error_code}`))
-    const rawStatuses = json.statuses ?? json.list ?? []
-    const statuses = Array.isArray(rawStatuses) ? rawStatuses as Array<Record<string, unknown>> : []
+
+    const completed = await Promise.all(statuses.map(async (status) => {
+      const statusId = String(status.id ?? status.status_id ?? '')
+      const currentContent = stripHtml(status.text ?? status.description)
+      if (currentContent.length >= 80 || !statusId) return status
+      try {
+        const detailUrl = new URL('https://api.xueqiu.com/statuses/show.json')
+        detailUrl.searchParams.set('id', statusId)
+        const detailRes = await fetch(detailUrl, { headers: this.headers(user.profileUrl) })
+        if (!detailRes.ok) return status
+        const detail = await detailRes.json() as Record<string, unknown>
+        return { ...status, ...detail }
+      } catch {
+        return status
+      }
+    }))
     return {
       platformUserId: user.userId,
       nickname: user.nickname,
       profileUrl: user.profileUrl,
-      documents: statuses.map((status) => {
+      documents: completed.map((status) => {
         const statusId = String(status.id ?? status.status_id ?? '')
         const rawUser = status.user as Record<string, unknown> | undefined
         return {

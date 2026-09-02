@@ -6,11 +6,12 @@ import {
   fetchOpinionDocuments,
   fetchOpinionSignals,
   fetchOpinionSubscriptions,
+  fetchOpinionSyncLogs,
   ingestOpinionDocument,
   saveOpinionSubscription,
   syncOpinionSubscription,
 } from '../api'
-import type { OpinionDocument, OpinionPlatform, OpinionSignal, OpinionSubscription } from '../types'
+import type { OpinionDocument, OpinionPlatform, OpinionSignal, OpinionSubscription, OpinionSyncLog } from '../types'
 import { useMarket } from '../composables/useMarket'
 import OpinionResearchPanel from './OpinionResearchPanel.vue'
 
@@ -19,6 +20,7 @@ const platform = ref<OpinionPlatform>('zhihu')
 const subscriptions = ref<OpinionSubscription[]>([])
 const documents = ref<OpinionDocument[]>([])
 const signals = ref<OpinionSignal[]>([])
+const syncLogs = ref<OpinionSyncLog[]>([])
 const loading = ref(false)
 const error = ref('')
 const notice = ref('')
@@ -48,14 +50,16 @@ async function load() {
   loading.value = true
   error.value = ''
   try {
-    const [subs, docs, signalList] = await Promise.all([
+    const [subs, docs, signalList, logs] = await Promise.all([
       fetchOpinionSubscriptions(platform.value),
       fetchOpinionDocuments({ platform: platform.value, limit: 100 }),
       fetchOpinionSignals(platform.value),
+      fetchOpinionSyncLogs(platform.value),
     ])
     subscriptions.value = subs
     documents.value = docs
     signals.value = signalList
+    syncLogs.value = logs
     if (importSubscriptionId.value && !subs.some((item) => item.id === importSubscriptionId.value)) {
       importSubscriptionId.value = ''
     }
@@ -284,6 +288,21 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
             {{ importing ? '处理中…' : '保存原文' }}
           </button>
         </section>
+
+        <section class="op-card">
+          <h3>最近同步记录</h3>
+          <div v-if="syncLogs.length === 0" class="op-empty">暂无同步记录</div>
+          <div v-for="log in syncLogs.slice(0, 10)" :key="log.id" class="op-log">
+            <div>
+              <b>{{ log.authorName }}</b>
+              <span :class="`status-${log.status === 'success' ? 'ready' : log.status === 'failed' ? 'error' : 'missing'}`">
+                {{ log.status === 'success' ? '成功' : log.status === 'failed' ? '失败' : '运行中' }}
+              </span>
+            </div>
+            <small>{{ formatTime(log.startedAt) }} · {{ log.attempt }}次尝试 · 新增{{ log.created }}篇</small>
+            <small v-if="log.error" class="op-sub-error">{{ log.error }}</small>
+          </div>
+        </section>
       </aside>
 
       <section class="op-feed">
@@ -376,6 +395,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-sub-top > span { margin-left: auto; font-size: 10px; }
 .status-ready { color: var(--up); }.status-missing, .status-expired { color: #d99000; }.status-error { color: var(--down); }
 .op-sub-error { margin-top: 5px; overflow: hidden; color: var(--down); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.op-log { padding: 7px 0; border-top: 1px solid var(--border); }.op-log:first-of-type { border-top: 0; }.op-log > div { display: flex; justify-content: space-between; }.op-log small { display: block; margin-top: 3px; color: var(--text-3); }
 .op-sub-actions { margin-top: 7px; }.op-sub-actions .btn { font-size: 10px; }.danger { color: var(--down); }
 .op-check { flex-direction: row !important; align-items: center; }.op-check input { width: auto; }
 .op-feed-title { display: flex; justify-content: space-between; align-items: center; padding: 0 2px; }.op-feed-title span { color: var(--text-3); font-size: 11px; }

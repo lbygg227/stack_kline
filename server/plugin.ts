@@ -21,6 +21,7 @@ import {
   ingestOpinionDocument,
   listOpinionDocuments,
   listOpinionSubscriptions,
+  listOpinionSyncLogs,
   markOpinionAnalysisFailed,
   removeOpinionSubscription,
   resolveOpinionClaims,
@@ -471,6 +472,18 @@ export function marketDataPlugin(): Plugin {
               subscriptionId,
               code,
               limit: Number(url.searchParams.get('limit')) || 100,
+            }),
+          })
+          return
+        }
+
+        if (path === '/api/opinions/sync-logs') {
+          const platform = url.searchParams.get('platform')
+          sendJson(res, 200, {
+            logs: listOpinionSyncLogs({
+              platform: platform === 'zhihu' || platform === 'xueqiu' ? platform : undefined,
+              subscriptionId: url.searchParams.get('subscriptionId') || undefined,
+              limit: Number(url.searchParams.get('limit')) || 50,
             }),
           })
           return

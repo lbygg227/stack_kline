@@ -10,6 +10,7 @@ import type {
   OpinionPlatform,
   OpinionSignal,
   OpinionSubscription,
+  OpinionSyncLog,
   PrefetchProgress,
   Quote,
   SnapshotResponse,
@@ -212,6 +213,18 @@ export async function fetchOpinionSignals(
   if (!res.ok) throw new Error(`opinion signals http ${res.status}`)
   const json = (await res.json()) as { signals?: OpinionSignal[] }
   return json.signals ?? []
+}
+
+export async function fetchOpinionSyncLogs(
+  platform?: OpinionPlatform,
+  limit = 20,
+): Promise<OpinionSyncLog[]> {
+  const params = new URLSearchParams({ limit: String(limit) })
+  if (platform) params.set('platform', platform)
+  const res = await fetch(`/api/opinions/sync-logs?${params}`)
+  if (!res.ok) throw new Error(`opinion sync logs http ${res.status}`)
+  const json = (await res.json()) as { logs?: OpinionSyncLog[] }
+  return json.logs ?? []
 }
 
 export async function runOpinionBacktest(

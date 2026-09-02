@@ -85,13 +85,36 @@ export interface OpinionDocumentInput {
   publishedAt?: number
 }
 
+export interface OpinionSyncLog {
+  id: string
+  subscriptionId: string
+  platform: OpinionPlatform
+  authorName: string
+  startedAt: number
+  finishedAt?: number
+  status: 'running' | 'success' | 'failed'
+  attempt: number
+  fetched: number
+  created: number
+  changed: number
+  analyzed: number
+  failed: number
+  error?: string
+}
+
 interface OpinionStore {
   subscriptions: OpinionSubscription[]
   documents: OpinionDocument[]
+  syncLogs: OpinionSyncLog[]
 }
 
 const STORE_FILE = 'opinions/store.json'
-let state = readJson<OpinionStore>(STORE_FILE) ?? { subscriptions: [], documents: [] }
+const loaded = readJson<Partial<OpinionStore>>(STORE_FILE)
+let state: OpinionStore = {
+  subscriptions: loaded?.subscriptions ?? [],
+  documents: loaded?.documents ?? [],
+  syncLogs: loaded?.syncLogs ?? [],
+}
 
 const persist = () => writeJson(STORE_FILE, state)
 const hashContent = (title: string, content: string) =>
@@ -108,6 +131,49 @@ export function listOpinionSubscriptions(platform?: OpinionPlatform): OpinionSub
   return state.subscriptions
     .filter((item) => !platform || item.platform === platform)
     .sort((a, b) => b.updatedAt - a.updatedAt)
+}
+
+export function startOpinionSyncLog(subscription: OpinionSubscription): OpinionSyncLog {
+  const log: OpinionSyncLog = {
+    id: randomUUID(),
+    subscriptionId: subscription.id,
+    platform: subscription.platform,
+    authorName: subscription.nickname || subscription.platformUserId,
+    startedAt: Date.now(),
+    status: 'running',
+    attempt: 0,
+    fetched: 0,
+    created: 0,
+    changed: 0,
+    analyzed: 0,
+    failed: 0,
+  }
+  state.syncLogs.unshift(log)
+  state.syncLogs = state.syncLogs.slice(0, 500)
+  persist()
+  return log
+}
+
+export function finishOpinionSyncLog(
+  id: string,
+  patch: Partial<Omit<OpinionSyncLog, 'id' | 'subscriptionId' | 'platform' | 'authorName' | 'startedAt'>>,
+): OpinionSyncLog | null {
+  const log = state.syncLogs.find((item) => item.id === id)
+  if (!log) return null
+  Object.assign(log, patch, { finishedAt: Date.now() })
+  persist()
+  return log
+}
+
+export function listOpinionSyncLogs(filters: {
+  platform?: OpinionPlatform
+  subscriptionId?: string
+  limit?: number
+} = {}): OpinionSyncLog[] {
+  return state.syncLogs
+    .filter((log) => !filters.platform || log.platform === filters.platform)
+    .filter((log) => !filters.subscriptionId || log.subscriptionId === filters.subscriptionId)
+    .slice(0, Math.max(1, Math.min(200, filters.limit ?? 50)))
 }
 
 export function saveOpinionSubscription(input: Partial<OpinionSubscription> & {
