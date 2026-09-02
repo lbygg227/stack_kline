@@ -205,6 +205,62 @@ export interface BacktestResult {
   warnings: string[]
 }
 
+export interface PortfolioBacktestConfig {
+  strategyKeys: string[]
+  strategyParams: Record<string, Record<string, number>>
+  codes: string[]
+  holdingDays: number
+  combineMode: 'all' | 'any'
+  startDate?: string
+  endDate?: string
+  initialCapital: number
+  maxPositions: number
+  positionSizePct: number
+  commissionRate: number
+  minCommission: number
+  stampDutyRate: number
+  slippageBps: number
+  lotSize: number
+  benchmarkCode: string
+}
+
+export interface PortfolioBacktestResult {
+  mode: 'portfolio'
+  config: PortfolioBacktestConfig
+  metrics: {
+    totalReturnPct: number
+    annualizedReturnPct: number
+    benchmarkReturnPct?: number
+    excessReturnPct?: number
+    maxDrawdownPct: number
+    sharpe?: number
+    trades: number
+    winRate: number
+    endingEquity: number
+    cash: number
+    openPositions: number
+  }
+  equityCurve: Array<{ date: string; equity: number; cash: number; positions: number; benchmark?: number }>
+  trades: Array<{
+    code: string
+    signalDate: string
+    entryDate: string
+    plannedExitDate: string
+    exitDate: string
+    shares: number
+    entryPrice: number
+    exitPrice: number
+    entryCost: number
+    exitProceeds: number
+    pnl: number
+    returnPct: number
+    holdingDays: number
+    hitStrategies: string[]
+  }>
+  rejectedSignals: Record<'alreadyHeld' | 'positionLimit' | 'insufficientCash' | 'limitUp', number>
+  warnings: string[]
+}
+
 export type OpinionPlatform = 'zhihu' | 'xueqiu'
 
 export interface OpinionSubscription {

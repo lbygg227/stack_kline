@@ -11,6 +11,8 @@ import type {
   OpinionSignal,
   OpinionSubscription,
   OpinionSyncLog,
+  PortfolioBacktestConfig,
+  PortfolioBacktestResult,
   PrefetchProgress,
   Quote,
   SnapshotResponse,
@@ -115,6 +117,21 @@ export async function runBacktest(config: Partial<BacktestConfig>): Promise<Back
     throw new Error(err?.error ?? `backtest http ${res.status}`)
   }
   return (await res.json()) as BacktestResult
+}
+
+export async function runPortfolioBacktest(
+  config: Partial<PortfolioBacktestConfig>,
+): Promise<PortfolioBacktestResult> {
+  const res = await fetch('/api/backtests/portfolio', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(config),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `portfolio backtest http ${res.status}`)
+  }
+  return await res.json()
 }
 
 /** AI 选股：自然语言 -> 服务端 DeepSeek 解析 -> 策略引擎 */

@@ -15,6 +15,7 @@ import { analyzeStock } from './analysis.ts'
 import { generateAiCommentary, generateAiStockBrief } from './anspire.ts'
 import { searchStockNews } from './news.ts'
 import { runBacktest } from './backtest.ts'
+import { runPortfolioBacktest } from './portfolio-backtest.ts'
 import {
   applyOpinionAnalysis,
   getOpinionDocument,
@@ -249,6 +250,20 @@ export function marketDataPlugin(): Plugin {
           try {
             const body = (await readBody(req)) || '{}'
             const result = await runBacktest(
+              JSON.parse(body),
+              (code) => getKlineWithCache(code, 'day', 500),
+            )
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/backtests/portfolio') {
+          try {
+            const body = (await readBody(req)) || '{}'
+            const result = await runPortfolioBacktest(
               JSON.parse(body),
               (code) => getKlineWithCache(code, 'day', 500),
             )

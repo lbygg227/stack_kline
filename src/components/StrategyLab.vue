@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { runBacktest } from '../api'
-import type { BacktestResult, StrategyDefinition } from '../types'
+import { runBacktest, runPortfolioBacktest } from '../api'
+import type { BacktestResult, PortfolioBacktestResult, StrategyDefinition } from '../types'
 
 const props = defineProps<{
   strategies: StrategyDefinition[]
@@ -28,6 +28,12 @@ const slippageBps = ref(5)
 const running = ref(false)
 const error = ref('')
 const result = ref<BacktestResult | null>(null)
+const portfolioResult = ref<PortfolioBacktestResult | null>(null)
+const backtestMode = ref<'event' | 'portfolio'>('event')
+const initialCapital = ref(1_000_000)
+const maxPositions = ref(10)
+const positionSizePct = ref(0.1)
+const minCommission = ref(5)
 const presetName = ref('')
 const selectedPresetId = ref('')
 
@@ -42,6 +48,11 @@ interface StrategyLabPreset {
   commissionRate: number
   stampDutyRate: number
   slippageBps: number
+  backtestMode: 'event' | 'portfolio'
+  initialCapital: number
+  maxPositions: number
+  positionSizePct: number
+  minCommission: number
 }
 
 const STORAGE_KEY = 'stock-kline-strategy-lab-v1'
@@ -80,7 +91,7 @@ onMounted(() => {
 })
 
 watch(
-  [selected, strategyParams, holdingDays, combineMode, benchmarkCode, commissionRate, stampDutyRate, slippageBps, presets],
+  [selected, strategyParams, holdingDays, combineMode, benchmarkCode, commissionRate, stampDutyRate, slippageBps, backtestMode, initialCapital, maxPositions, positionSizePct, minCommission, presets],
   () => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({
       current: currentPreset('current', '当前配置'),
@@ -114,6 +125,11 @@ function currentPreset(id: string, name: string): StrategyLabPreset {
     commissionRate: commissionRate.value,
     stampDutyRate: stampDutyRate.value,
     slippageBps: slippageBps.value,
+    backtestMode: backtestMode.value,
+    initialCapital: initialCapital.value,
+    maxPositions: maxPositions.value,
+    positionSizePct: positionSizePct.value,
+    minCommission: minCommission.value,
   }
 }
 
@@ -132,6 +148,11 @@ function applyPreset(preset: Partial<StrategyLabPreset>) {
   if (typeof preset.commissionRate === 'number') commissionRate.value = preset.commissionRate
   if (typeof preset.stampDutyRate === 'number') stampDutyRate.value = preset.stampDutyRate
   if (typeof preset.slippageBps === 'number') slippageBps.value = preset.slippageBps
+  if (preset.backtestMode === 'event' || preset.backtestMode === 'portfolio') backtestMode.value = preset.backtestMode
+  if (typeof preset.initialCapital === 'number') initialCapital.value = preset.initialCapital
+  if (typeof preset.maxPositions === 'number') maxPositions.value = preset.maxPositions
+  if (typeof preset.positionSizePct === 'number') positionSizePct.value = preset.positionSizePct
+  if (typeof preset.minCommission === 'number') minCommission.value = preset.minCommission
 }
 
 function savePreset() {
@@ -190,8 +211,9 @@ async function run() {
   running.value = true
   error.value = ''
   result.value = null
+  portfolioResult.value = null
   try {
-    result.value = await runBacktest({
+    const config = {
       strategyKeys: selected.value,
       strategyParams: Object.fromEntries(
         selected.value.map((key) => [key, strategyParams.value[key] ?? {}]),
@@ -205,7 +227,19 @@ async function run() {
       commissionRate: commissionRate.value,
       stampDutyRate: stampDutyRate.value,
       slippageBps: slippageBps.value,
-    })
+    }
+    if (backtestMode.value === 'portfolio') {
+      portfolioResult.value = await runPortfolioBacktest({
+        ...config,
+        initialCapital: initialCapital.value,
+        maxPositions: maxPositions.value,
+        positionSizePct: positionSizePct.value,
+        minCommission: minCommission.value,
+        lotSize: 100,
+      })
+    } else {
+      result.value = await runBacktest(config)
+    }
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -232,6 +266,10 @@ const fmtPct = (value: number | undefined) =>
 
       <div class="sl-body">
         <section class="sl-config">
+          <div class="sl-mode-tabs">
+            <button :class="{ active: backtestMode === 'event' }" @click="backtestMode = 'event'">事件回测</button>
+            <button :class="{ active: backtestMode === 'portfolio' }" @click="backtestMode = 'portfolio'">组合回测</button>
+          </div>
           <div class="sl-label">可回测策略</div>
           <div class="sl-chips">
             <button
@@ -314,6 +352,24 @@ const fmtPct = (value: number | undefined) =>
               <span>卖出印花税率</span>
               <input v-model.number="stampDutyRate" type="number" min="0" step="0.0001" />
             </label>
+            <template v-if="backtestMode === 'portfolio'">
+              <label>
+                <span>初始资金</span>
+                <input v-model.number="initialCapital" type="number" min="10000" step="10000" />
+              </label>
+              <label>
+                <span>最大持仓数</span>
+                <input v-model.number="maxPositions" type="number" min="1" max="50" />
+              </label>
+              <label>
+                <span>单仓资金比例</span>
+                <input v-model.number="positionSizePct" type="number" min="0.01" max="1" step="0.01" />
+              </label>
+              <label>
+                <span>最低佣金（元）</span>
+                <input v-model.number="minCommission" type="number" min="0" step="1" />
+              </label>
+            </template>
           </div>
 
           <label class="sl-codes">
@@ -323,7 +379,7 @@ const fmtPct = (value: number | undefined) =>
 
           <div class="sl-actions">
             <button class="btn sl-run" :disabled="running" @click="run">
-              {{ running ? '回测中…' : '运行回测' }}
+              {{ running ? '回测中…' : backtestMode === 'portfolio' ? '运行组合回测' : '运行事件回测' }}
             </button>
             <span class="sl-tip">信号收盘确认，下一交易日开盘进入</span>
           </div>
@@ -358,6 +414,38 @@ const fmtPct = (value: number | undefined) =>
               <span :class="pctClass(trade.excessReturnPct)">{{ fmtPct(trade.excessReturnPct) }}</span>
             </div>
             <div v-if="result.trades.length === 0" class="sl-empty">当前区间没有产生交易信号</div>
+          </div>
+        </section>
+
+        <section v-if="portfolioResult" class="sl-result">
+          <div class="sl-metrics">
+            <div><b :class="pctClass(portfolioResult.metrics.totalReturnPct)">{{ fmtPct(portfolioResult.metrics.totalReturnPct) }}</b><span>组合收益</span></div>
+            <div><b :class="pctClass(portfolioResult.metrics.excessReturnPct)">{{ fmtPct(portfolioResult.metrics.excessReturnPct) }}</b><span>基准超额</span></div>
+            <div><b :class="pctClass(portfolioResult.metrics.maxDrawdownPct)">{{ fmtPct(portfolioResult.metrics.maxDrawdownPct) }}</b><span>最大回撤</span></div>
+            <div><b>{{ portfolioResult.metrics.sharpe?.toFixed(2) ?? '--' }}</b><span>Sharpe</span></div>
+            <div><b>{{ portfolioResult.metrics.trades }}</b><span>完成交易</span></div>
+            <div><b>{{ portfolioResult.metrics.winRate.toFixed(1) }}%</b><span>胜率</span></div>
+          </div>
+          <div v-for="warning in portfolioResult.warnings" :key="warning" class="sl-warning">{{ warning }}</div>
+          <div class="sl-warning">
+            拒绝信号：已持仓 {{ portfolioResult.rejectedSignals.alreadyHeld }}，仓位已满
+            {{ portfolioResult.rejectedSignals.positionLimit }}，资金不足
+            {{ portfolioResult.rejectedSignals.insufficientCash }}，涨停不可买
+            {{ portfolioResult.rejectedSignals.limitUp }}
+          </div>
+          <div class="sl-trades">
+            <div class="sl-trade-head">
+              <span>代码</span><span>信号日</span><span>入场</span><span>退出</span><span>收益</span><span>盈亏</span>
+            </div>
+            <div v-for="(trade, index) in portfolioResult.trades.slice(0, 200)" :key="`${trade.code}-${trade.entryDate}-${index}`" class="sl-trade">
+              <span>{{ trade.code.toUpperCase() }}</span>
+              <span>{{ trade.signalDate }}</span>
+              <span>{{ trade.entryDate }}</span>
+              <span>{{ trade.exitDate }}</span>
+              <span :class="pctClass(trade.returnPct)">{{ fmtPct(trade.returnPct) }}</span>
+              <span :class="pctClass(trade.pnl)">{{ trade.pnl.toFixed(0) }}</span>
+            </div>
+            <div v-if="portfolioResult.trades.length === 0" class="sl-empty">当前条件没有完成的组合交易</div>
           </div>
         </section>
       </div>
@@ -399,6 +487,7 @@ const fmtPct = (value: number | undefined) =>
 .sl-body { overflow: auto; }
 .sl-config { padding: 16px; border-bottom: 1px solid var(--border); }
 .sl-label, .sl-codes > span { display: block; margin-bottom: 7px; color: var(--text-2); font-size: 12px; font-weight: 600; }
+.sl-mode-tabs { display: flex; gap: 6px; margin-bottom: 12px; }.sl-mode-tabs button { padding: 6px 14px; border: 1px solid var(--border); border-radius: 5px; background: var(--panel-2); color: var(--text-2); cursor: pointer; }.sl-mode-tabs button.active { border-color: var(--primary); color: var(--primary); }
 .sl-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .sl-chip {
   padding: 5px 9px;
