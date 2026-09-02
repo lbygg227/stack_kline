@@ -9,6 +9,31 @@ export interface KLineBar {
   [key: string]: unknown
 }
 
+export interface DataCoverageResponse {
+  klines: Array<{
+    code: string
+    period: string
+    bars: number
+    firstDate?: string
+    lastDate?: string
+    fetchedAt?: number
+    adjust: 'forward'
+  }>
+  pointInTimeSnapshots: Array<{
+    capturedAt: number
+    asOfDate: string
+    file: string
+    count: number
+    fields: string[]
+    source: 'tickflow+eastmoney'
+  }>
+  constraints: {
+    klineAdjust: 'forward'
+    fundamentalBacktestRequiresSnapshot: boolean
+    unavailableHistorically: string[]
+  }
+}
+
 /** 股票/指数基础信息（code 为带市场前缀，如 sh600519） */
 export interface StockInfo {
   code: string

@@ -3,6 +3,7 @@ import type {
   BacktestConfig,
   BacktestResult,
   BatchAnalysisResponse,
+  DataCoverageResponse,
   FusionResult,
   KLineBar,
   OpinionDocument,
@@ -66,6 +67,13 @@ export async function fetchKlineBars(req: KlineRequest): Promise<KLineBar[]> {
     if (periodKey.startsWith('m')) return generateMinuteBars(code, count)
     return generateDailyBars(code, count)
   }
+}
+
+export async function fetchDataCoverage(codes: string[], period = 'day'): Promise<DataCoverageResponse> {
+  const params = new URLSearchParams({ codes: codes.join(','), period })
+  const res = await fetch(`/api/data/coverage?${params}`)
+  if (!res.ok) throw new Error(`data coverage http ${res.status}`)
+  return await res.json()
 }
 
 /** 全市场快照（服务端缓存/抓取） */

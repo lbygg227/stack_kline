@@ -5,8 +5,8 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
-import { service } from './service.ts'
-import { getKlineWithCache } from './tencent.ts'
+import { listPointInTimeSnapshots, service } from './service.ts'
+import { getKlineCoverage, getKlineWithCache } from './tencent.ts'
 import { extractOpinionDocument, generateStockBrief, parseNaturalLanguage } from './deepseek.ts'
 import { type StrategyConditions } from './strategy.ts'
 import { SCREENING_STRATEGIES, buildIndustryStats, evaluateStrategies } from './screening-strategies.ts'
@@ -161,6 +161,24 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+        if (path === '/api/data/coverage') {
+          const codes = (url.searchParams.get('codes') ?? '')
+            .split(',')
+            .map((code) => code.trim().toLowerCase())
+            .filter((code) => /^(sh|sz|bj)\d{6}$/.test(code))
+            .slice(0, 100)
+          sendJson(res, 200, {
+            klines: getKlineCoverage(codes, url.searchParams.get('period') || 'day'),
+            pointInTimeSnapshots: listPointInTimeSnapshots(Number(url.searchParams.get('limit')) || 100),
+            constraints: {
+              klineAdjust: 'forward',
+              fundamentalBacktestRequiresSnapshot: true,
+              unavailableHistorically: ['ST状态', '上市初期涨跌停规则', '退市股票完整样本', '历史行业成分调整'],
+            },
+          })
+          return
+        }
+
         // ---- 实时报价 ----
         if (path === '/api/quote') {
           const codes = (url.searchParams.get('codes') ?? '').split(',').map((c) => c.trim()).filter(Boolean)
@@ -297,7 +315,7 @@ export function marketDataPlugin(): Plugin {
             const body = (await readBody(req)) || '{}'
             const result = await runBacktest(
               JSON.parse(body),
-              (code) => getKlineWithCache(code, 'day', 500),
+              (code) => getKlineWithCache(code, 'day', 2000),
             )
             sendJson(res, 200, result)
           } catch (e) {
@@ -311,7 +329,7 @@ export function marketDataPlugin(): Plugin {
             const body = (await readBody(req)) || '{}'
             const result = await runPortfolioBacktest(
               JSON.parse(body),
-              (code) => getKlineWithCache(code, 'day', 500),
+              (code) => getKlineWithCache(code, 'day', 2000),
             )
             sendJson(res, 200, result)
           } catch (e) {
@@ -325,7 +343,7 @@ export function marketDataPlugin(): Plugin {
             const body = (await readBody(req)) || '{}'
             const result = await optimizeStrategy(
               JSON.parse(body),
-              (code) => getKlineWithCache(code, 'day', 500),
+              (code) => getKlineWithCache(code, 'day', 2000),
             )
             sendJson(res, 200, result)
           } catch (e) {
@@ -595,7 +613,7 @@ export function marketDataPlugin(): Plugin {
             const result = await runOpinionBacktest(
               documents,
               body,
-              (code) => getKlineWithCache(code, 'day', 500),
+              (code) => getKlineWithCache(code, 'day', 2000),
             )
             sendJson(res, 200, result)
           } catch (e) {

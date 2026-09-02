@@ -35,6 +35,49 @@ interface SnapshotFile {
   stocks: SnapshotStock[]
 }
 
+export interface PointInTimeSnapshot {
+  capturedAt: number
+  asOfDate: string
+  file: string
+  count: number
+  fields: string[]
+  source: 'tickflow+eastmoney'
+}
+
+interface SnapshotHistoryIndex {
+  snapshots: PointInTimeSnapshot[]
+}
+
+function archiveSnapshot(snapshot: SnapshotFile) {
+  const capturedAt = Date.now()
+  const asOfDate = new Date(capturedAt).toISOString().slice(0, 10)
+  const file = `snapshot-history/${asOfDate}.json`
+  writeJson(file, {
+    capturedAt,
+    asOfDate,
+    source: 'tickflow+eastmoney',
+    fieldsAvailableAt: ['price', 'changePct', 'volume', 'amount', 'turnover', 'volumeRatio', 'pe', 'pb', 'mktcap', 'nmc'],
+    stocks: snapshot.stocks,
+  })
+  const index = readJson<SnapshotHistoryIndex>('snapshot-history/index.json') ?? { snapshots: [] }
+  index.snapshots = index.snapshots.filter((item) => item.asOfDate !== asOfDate)
+  index.snapshots.unshift({
+    capturedAt,
+    asOfDate,
+    file,
+    count: snapshot.stocks.length,
+    fields: ['price', 'changePct', 'volume', 'amount', 'turnover', 'volumeRatio', 'pe', 'pb', 'mktcap', 'nmc'],
+    source: 'tickflow+eastmoney',
+  })
+  index.snapshots = index.snapshots.slice(0, 1500)
+  writeJson('snapshot-history/index.json', index)
+}
+
+export function listPointInTimeSnapshots(limit = 100): PointInTimeSnapshot[] {
+  return (readJson<SnapshotHistoryIndex>('snapshot-history/index.json')?.snapshots ?? [])
+    .slice(0, Math.max(1, Math.min(500, limit)))
+}
+
 const SNAPSHOT_TTL = 15 * 60 * 1000
 
 let snapshotState: SnapshotFile | null = readJson<SnapshotFile>('market-snapshot.json')
@@ -52,6 +95,7 @@ async function ensureSnapshot(force: boolean): Promise<SnapshotFile | null> {
     snapshotProgress = { page: 1, count: stocks.length }
     snapshotState = { fetchedAt: Date.now(), stocks }
     writeJson('market-snapshot.json', snapshotState)
+    archiveSnapshot(snapshotState)
     return snapshotState
   } finally {
     snapshotFetching = false
@@ -74,6 +118,7 @@ async function refreshSlowVars(): Promise<{ detail: string }> {
         return { ...s, pe: e.pe, pb: e.pb, volumeRatio: e.volumeRatio, mktcap: e.mktcap, nmc: e.nmc }
       })
       writeJson('market-snapshot.json', snapshotState)
+      archiveSnapshot(snapshotState)
     }
     return { detail: `慢变量(PE/PB/量比/市值)刷新 ${em.length} 只` }
   } catch (e) {

@@ -90,9 +90,22 @@ const columnToBars = (c: ColumnKlines): KLineBar[] => {
   return bars
 }
 
-/** 日/周/月 K 线（前复权） */
-export async function fetchTickKlines(symbol: string, period: '1d' | '1w' | '1M', count: number): Promise<KLineBar[]> {
-  const data = (await tfGet('/klines', { symbol, period, count, adjust: 'forward' })) as ColumnKlines
+/** 日/周/月 K 线（前复权，单次最多 10000 根） */
+export async function fetchTickKlines(
+  symbol: string,
+  period: '1d' | '1w' | '1M',
+  count: number,
+  startTime?: number,
+  endTime?: number,
+): Promise<KLineBar[]> {
+  const data = (await tfGet('/klines', {
+    symbol,
+    period,
+    count: Math.max(1, Math.min(10_000, count)),
+    start_time: startTime,
+    end_time: endTime,
+    adjust: 'forward',
+  })) as ColumnKlines
   return columnToBars(data)
 }
 

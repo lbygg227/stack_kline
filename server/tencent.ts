@@ -1,7 +1,7 @@
 /**
  * 服务端 K 线读取（数据源：TickFlow）+ 本地磁盘缓存。
  * - 日/周/月/分钟全支持；数据落盘 data/kline-cache/{code}_{period}.json
- * - 一次拉取完整历史（日/周/月各 500 根、分钟当日 240 根），无需分页
+ * - 日/周/月最多按需拉取 10000 根，支持 start/end 时间区间
  * - 保留 batchKlines 供全量预取 / 策略引擎共用
  */
 
@@ -40,29 +40,62 @@ const PERIOD_CFG: Record<string, PeriodCfg> = {
 interface KlineCacheFile {
   fetchedAt: number
   bars: KLineBar[]
+  period?: string
+  adjust?: 'forward'
+  requestedCount?: number
+  firstTimestamp?: number
+  lastTimestamp?: number
 }
 
-/** 带磁盘缓存的 K 线读取（start/end 分页参数已废弃，TickFlow 一次拉全历史） */
+const parseTime = (value: string, endOfDay = false): number | undefined => {
+  if (!value) return undefined
+  const numeric = Number(value)
+  if (Number.isFinite(numeric) && numeric > 0) return numeric < 1e12 ? numeric * 1000 : numeric
+  const parsed = Date.parse(endOfDay && /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T23:59:59.999` : value)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+const cachePayload = (period: string, requestedCount: number, bars: KLineBar[]): KlineCacheFile => ({
+  fetchedAt: Date.now(),
+  period,
+  adjust: 'forward',
+  requestedCount,
+  firstTimestamp: bars[0]?.timestamp,
+  lastTimestamp: bars.at(-1)?.timestamp,
+  bars,
+})
+
+/** 带磁盘缓存的 K 线读取，日/周/月可按数量或时间区间获取。 */
 export async function getKlineWithCache(
   code: string,
   period: string,
-  _count = 500,
-  _start = '',
-  _end = '',
+  count = 500,
+  start = '',
+  end = '',
 ): Promise<KLineBar[]> {
   const cfg = PERIOD_CFG[period] ?? PERIOD_CFG.day
   const cacheKey = `${code}_${period}`
   const cached = readJson<KlineCacheFile>(`kline-cache/${cacheKey}.json`)
-  if (cached && cached.bars.length > 0 && Date.now() - cached.fetchedAt < 30 * 60 * 1000) {
-    return cached.bars
+  const requestedCount = cfg.kind === 'klines'
+    ? Math.max(1, Math.min(10_000, Math.round(count || cfg.count)))
+    : Math.max(1, Math.min(cfg.count, Math.round(count || cfg.count)))
+  const startTime = parseTime(start)
+  const endTime = parseTime(end, true)
+  const isFresh = cached && Date.now() - cached.fetchedAt < 30 * 60 * 1000
+  if (isFresh && cached.bars.length > 0 && !startTime && !endTime && cached.bars.length >= requestedCount) {
+    return cached.bars.slice(-requestedCount)
   }
   const symbol = toTickSymbol(code)
   const bars =
     cfg.kind === 'klines'
-      ? await fetchTickKlines(symbol, cfg.p, cfg.count)
-      : await fetchTickIntraday(symbol, cfg.p, cfg.count)
+      ? await fetchTickKlines(symbol, cfg.p, requestedCount, startTime, endTime)
+      : await fetchTickIntraday(symbol, cfg.p, requestedCount)
   if (bars.length > 0) {
-    writeJson(`kline-cache/${cacheKey}.json`, { fetchedAt: Date.now(), bars })
+    const merged = startTime || endTime
+      ? [...new Map([...(cached?.bars ?? []), ...bars].map((bar) => [bar.timestamp, bar])).values()]
+          .sort((a, b) => a.timestamp - b.timestamp)
+      : bars
+    writeJson(`kline-cache/${cacheKey}.json`, cachePayload(period, requestedCount, merged))
   }
   return bars
 }
@@ -111,7 +144,7 @@ export async function batchKlines(
         const bars = barsMap.get(toTickSymbol(code))
         if (bars && bars.length > 0) {
           result.set(code, bars)
-          writeJson(`kline-cache/${code}_${period}.json`, { fetchedAt: Date.now(), bars })
+          writeJson(`kline-cache/${code}_${period}.json`, cachePayload(period, cfg.count, bars))
         } else {
           failed++
         }
@@ -129,4 +162,34 @@ export async function batchKlines(
   }
 
   return result
+}
+
+export interface KlineCoverage {
+  code: string
+  period: string
+  bars: number
+  firstDate?: string
+  lastDate?: string
+  fetchedAt?: number
+  adjust: 'forward'
+}
+
+export function getKlineCoverage(codes: string[], period = 'day'): KlineCoverage[] {
+  return codes.map((code) => {
+    const cached = readJson<KlineCacheFile>(`kline-cache/${code}_${period}.json`)
+    const first = cached?.bars[0]?.timestamp
+    const last = cached?.bars.at(-1)?.timestamp
+    const toDate = (timestamp: number | undefined) => timestamp
+      ? new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp).toISOString().slice(0, 10)
+      : undefined
+    return {
+      code,
+      period,
+      bars: cached?.bars.length ?? 0,
+      firstDate: toDate(first),
+      lastDate: toDate(last),
+      fetchedAt: cached?.fetchedAt,
+      adjust: 'forward',
+    }
+  })
 }
