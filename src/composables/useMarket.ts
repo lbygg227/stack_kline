@@ -2,9 +2,10 @@ import { reactive, ref } from 'vue'
 import type { Quote, StockInfo } from '../types'
 import { DEFAULT_WATCHLIST, INDEX_LIST, stockNameOf } from '../data/stocks'
 import { fetchQuotes } from '../api'
-import { loadWatchlist, removeFromWatchlist as removeWatch, saveWatchlist } from '../data/watchlist'
+import { loadWatchlist, removeFromWatchlist as removeWatch, removeFromWatchlistMany as removeWatchMany, saveWatchlist } from '../data/watchlist'
 
-export type MobileTab = 'market' | 'watchlist' | 'all' | 'strategy' | 'opinion' | 'trade'
+export type DesktopView = 'market' | 'all-market' | 'strategy' | 'opinion' | 'data'
+export type MobileTab = 'market' | 'watchlist' | 'all' | 'strategy' | 'opinion' | 'trade' | 'data'
 
 interface MarketState {
   currentCode: string
@@ -14,7 +15,8 @@ interface MarketState {
   indexQuotes: Quote[]
   watchQuotes: Record<string, Quote>
   refreshing: boolean
-  view: 'market' | 'strategy' | 'opinion'
+  view: DesktopView
+  showTradePanel: boolean
 }
 
 const state = reactive<MarketState>({
@@ -26,6 +28,7 @@ const state = reactive<MarketState>({
   watchQuotes: {},
   refreshing: false,
   view: 'market',
+  showTradePanel: false,
 })
 
 /** 是否移动端窄屏（与各组件 CSS 断点保持一致：820px） */
@@ -96,6 +99,12 @@ export function removeFromWatchlist(code: string) {
   void refreshQuotes()
 }
 
+export function removeFromWatchlistMany(codes: string[]) {
+  if (codes.length === 0) return
+  watchlist.value = removeWatchMany(watchlist.value, codes)
+  void refreshQuotes()
+}
+
 export function resetWatchlist() {
   watchlist.value = [...DEFAULT_WATCHLIST]
   saveWatchlist(watchlist.value)
@@ -106,13 +115,21 @@ export function setPeriod(key: string) {
   state.periodKey = key
 }
 
-export function setView(view: 'market' | 'strategy' | 'opinion') {
+export function setView(view: DesktopView) {
   state.view = view
+}
+
+export function toggleTradePanel() {
+  state.showTradePanel = !state.showTradePanel
 }
 
 export function setMobileTab(tab: MobileTab) {
   mobileTab.value = tab
-  state.view = tab === 'strategy' ? 'strategy' : tab === 'opinion' ? 'opinion' : 'market'
+  if (tab === 'strategy') state.view = 'strategy'
+  else if (tab === 'opinion') state.view = 'opinion'
+  else if (tab === 'data') state.view = 'data'
+  else if (tab === 'all') state.view = 'all-market'
+  else state.view = 'market'
 }
 
 /** 供顶部指数栏 / 自选列表展示用的简化摘要 */
@@ -129,12 +146,14 @@ export function useMarket() {
     refreshQuotes,
     selectStock,
     removeFromWatchlist,
+    removeFromWatchlistMany,
     resetWatchlist,
     setPeriod,
     setView,
     setMobileTab,
     displayQuote,
     initMobile,
+    toggleTradePanel,
   }
 }
 

@@ -9,10 +9,11 @@ import KLineChart from './components/KLineChart.vue'
 import TradePanel from './components/TradePanel.vue'
 import StrategyPanel from './components/StrategyPanel.vue'
 import OpinionPanel from './components/OpinionPanel.vue'
+import DataManagePanel from './components/DataManagePanel.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
-const { state, isMobile, mobileTab, refreshQuotes, setMobileTab } = useMarket()
+const { state, isMobile, mobileTab, refreshQuotes, setMobileTab, toggleTradePanel } = useMarket()
 let timer: number | undefined
 
 const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
@@ -22,6 +23,7 @@ const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'strategy', label: '选股', icon: '🔍' },
   { key: 'opinion', label: '观点', icon: '📝' },
   { key: 'trade', label: '交易', icon: '💰' },
+  { key: 'data', label: '数据', icon: '🗄️' },
 ]
 
 function onVisibilityChange() {
@@ -63,20 +65,29 @@ onBeforeUnmount(() => {
         <StrategyPanel v-else-if="mobileTab === 'strategy'" />
         <OpinionPanel v-else-if="mobileTab === 'opinion'" />
         <TradePanel v-else-if="mobileTab === 'trade'" />
+        <DataManagePanel v-else-if="mobileTab === 'data'" />
       </div>
     </template>
 
-    <!-- 桌面端：保持现有三栏布局 -->
+    <!-- 桌面端：顶部 Tab 页面切换 -->
     <template v-else>
       <StrategyPanel v-if="state.view === 'strategy'" class="page-view" />
       <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
+      <AllMarketPanel v-else-if="state.view === 'all-market'" class="page-view" />
+      <DataManagePanel v-else-if="state.view === 'data'" class="page-view" />
       <div v-else class="main">
         <MarketList />
         <div class="center">
           <QuoteHeader />
           <KLineChart :code="state.currentCode" :name="state.currentName" />
         </div>
-        <TradePanel />
+        <button class="trade-toggle" @click="toggleTradePanel" :title="state.showTradePanel ? '隐藏盘口' : '显示盘口'">
+          {{ state.showTradePanel ? '▶' : '◀' }}
+          <span class="trade-toggle-label">盘口</span>
+        </button>
+        <Transition name="slide-right">
+          <TradePanel v-if="state.showTradePanel" />
+        </Transition>
       </div>
     </template>
 
@@ -106,8 +117,8 @@ onBeforeUnmount(() => {
 .main {
   flex: 1;
   display: flex;
-  gap: 10px;
-  padding: 10px;
+  gap: 6px;
+  padding: 6px;
   min-height: 0;
 }
 
@@ -115,7 +126,7 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
   min-height: 0;
 }
@@ -123,6 +134,44 @@ onBeforeUnmount(() => {
 .center > :last-child {
   flex: 1;
   min-height: 0;
+}
+
+.trade-toggle {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 24px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text-3);
+  font-size: 10px;
+  cursor: pointer;
+  padding: 8px 0;
+  transition: color 0.15s;
+}
+.trade-toggle:hover {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+.trade-toggle-label {
+  writing-mode: vertical-rl;
+  font-size: 11px;
+}
+
+.slide-right-enter-active,
+.slide-right-leave-active {
+  transition: all 0.2s ease;
+}
+.slide-right-enter-from,
+.slide-right-leave-to {
+  opacity: 0;
+  transform: translateX(20px);
+  width: 0 !important;
+  overflow: hidden;
 }
 
 .page-view {

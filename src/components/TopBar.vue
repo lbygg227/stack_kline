@@ -93,6 +93,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
 
     <button
       class="btn nav-btn"
+      :class="{ active: state.view === 'all-market' }"
+      @click="setView(state.view === 'all-market' ? 'market' : 'all-market')"
+    >
+      全市场
+    </button>
+
+    <button
+      class="btn nav-btn"
       :class="{ active: state.view === 'strategy' }"
       @click="setView(state.view === 'strategy' ? 'market' : 'strategy')"
     >
@@ -105,6 +113,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
       @click="setView(state.view === 'opinion' ? 'market' : 'opinion')"
     >
       观点研究
+    </button>
+
+    <button
+      class="btn nav-btn"
+      :class="{ active: state.view === 'data' }"
+      @click="setView(state.view === 'data' ? 'market' : 'data')"
+    >
+      数据管理
     </button>
 
     <nav class="index-bar">

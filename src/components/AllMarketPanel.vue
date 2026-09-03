@@ -1,14 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref } from 'vue'
-import type { PrefetchProgress, SnapshotStock, UpdateStatus } from '../types'
-import {
-  fetchSnapshot,
-  getPrefetchProgress,
-  getUpdateStatus,
-  runUpdate,
-  startPrefetch,
-  syncLatestDailyKlines,
-} from '../api'
+import type { SnapshotStock } from '../types'
+import { fetchSnapshot } from '../api'
 import { useMarket } from '../composables/useMarket'
 import { usePullRefresh } from '../composables/usePullRefresh'
 import { SW1_INDUSTRIES } from '../data/stocks'
@@ -22,15 +15,13 @@ const progress = ref({ page: 0, count: 0 })
 const error = ref('')
 const kw = ref('')
 const industryFilter = ref('')
-const sortKey = ref<'code' | 'name' | 'price' | 'changePct' | 'amount' | 'turnover' | 'mktcap' | 'pe'>('changePct')
+const focusTag = ref('')
+const sortKey = ref<'code' | 'name' | 'price' | 'changePct' | 'amount' | 'turnover' | 'mktcap' | 'pe' | 'pb' | 'volumeRatio'>('changePct')
 const asc = ref(false)
 const renderCount = ref(300)
-const prefetchProg = ref<PrefetchProgress>({ running: false, done: 0, total: 0, failed: 0 })
-const latestBusy = ref(false)
-const latestResult = ref('')
 
 let pollTimer: number | undefined
-const sheetMode = ref<'industry' | 'sort' | null>(null)
+const sheetMode = ref<'industry' | 'focus' | 'sort' | null>(null)
 
 async function loadSnapshot(force = false) {
   try {
@@ -54,18 +45,33 @@ const SORT_OPTIONS: Array<{ key: typeof sortKey.value; label: string }> = [
   { key: 'changePct', label: '涨跌幅' },
   { key: 'amount', label: '成交额' },
   { key: 'turnover', label: '换手率' },
+  { key: 'volumeRatio', label: '量比' },
   { key: 'price', label: '现价' },
   { key: 'mktcap', label: '总市值' },
   { key: 'pe', label: '市盈率' },
+  { key: 'pb', label: '市净率' },
   { key: 'code', label: '代码' },
   { key: 'name', label: '名称' },
+]
+
+const FOCUS_TAGS: Array<{ key: string; label: string; match: (s: SnapshotStock) => boolean }> = [
+  { key: 'strong', label: '强势', match: (s) => s.changePct >= 5 },
+  { key: 'volume', label: '放量', match: (s) => s.volumeRatio >= 2 },
+  { key: 'active', label: '高换手', match: (s) => s.turnover >= 5 },
+  { key: 'large', label: '大成交', match: (s) => s.amount >= 1e9 },
+  { key: 'value', label: '低估值', match: (s) => s.pe > 0 && s.pe < 20 && s.pb > 0 && s.pb < 2 },
+  { key: 'broken', label: '破净', match: (s) => s.pb > 0 && s.pb < 1 },
+  { key: 'limitup', label: '涨停', match: (s) => s.changePct >= 9.8 },
+  { key: 'drop', label: '超跌', match: (s) => s.changePct <= -5 },
 ]
 
 const filtered = computed(() => {
   const q = kw.value.trim().toLowerCase()
   const ind = industryFilter.value
+  const focus = FOCUS_TAGS.find((t) => t.key === focusTag.value)
   return stocks.value.filter((s) => {
     if (ind && (s.industry ?? '其他') !== ind) return false
+    if (focus && !focus.match(s)) return false
     if (!q) return true
     return s.name.toLowerCase().includes(q) || s.code.toLowerCase().includes(q)
   })
@@ -84,6 +90,68 @@ const sorted = computed(() => {
 
 const visible = computed(() => sorted.value.slice(0, renderCount.value))
 
+interface SectorStat {
+  industry: string
+  avg: number
+  up: number
+  down: number
+  amount: number
+  leader: SnapshotStock | null
+  count: number
+}
+
+const sectorStats = computed<SectorStat[]>(() => {
+  const map = new Map<string, SectorStat>()
+  for (const s of stocks.value) {
+    const industry = s.industry ?? '其他'
+    const st = map.get(industry) ?? { industry, avg: 0, up: 0, down: 0, amount: 0, leader: null, count: 0 }
+    st.avg += s.changePct
+    st.amount += s.amount
+    st.count += 1
+    if (s.changePct > 0) st.up += 1
+    else if (s.changePct < 0) st.down += 1
+    if (!st.leader || s.changePct > st.leader.changePct) st.leader = s
+    map.set(industry, st)
+  }
+  const arr = [...map.values()]
+  for (const st of arr) st.avg = st.avg / Math.max(1, st.count)
+  arr.sort((a, b) => b.avg - a.avg)
+  return arr
+})
+
+const topSectors = computed(() => sectorStats.value.slice(0, 10))
+
+const overview = computed(() => {
+  const list = stocks.value
+  let up = 0
+  let down = 0
+  let flat = 0
+  let limitUp = 0
+  let limitDown = 0
+  let totalAmount = 0
+  let avgChange = 0
+  for (const s of list) {
+    if (s.changePct > 0) up += 1
+    else if (s.changePct < 0) down += 1
+    else flat += 1
+    if (s.changePct >= 9.8) limitUp += 1
+    if (s.changePct <= -9.8) limitDown += 1
+    totalAmount += s.amount
+    avgChange += s.changePct
+  }
+  return {
+    total: list.length,
+    up,
+    down,
+    flat,
+    limitUp,
+    limitDown,
+    totalAmount: totalAmount / 1e12,
+    avgChange: list.length ? avgChange / list.length : 0,
+    topIndustry: sectorStats.value[0]?.industry ?? '—',
+  }
+})
+
 function onScroll(e: Event) {
   const el = e.target as HTMLElement
   if (el.scrollTop + el.clientHeight >= el.scrollHeight - 120) {
@@ -91,92 +159,64 @@ function onScroll(e: Event) {
   }
 }
 
-async function doPrefetch() {
-  if (prefetchProg.value.running) return
-  await startPrefetch('day')
-  pollPrefetch()
-}
-
-async function syncAllLatest() {
-  if (latestBusy.value) return
-  latestBusy.value = true
-  latestResult.value = ''
-  error.value = ''
-  try {
-    const result = await syncLatestDailyKlines()
-    const summary = result.summary
-    latestResult.value = `最新完整交易日 ${result.expectedDate ?? '未知'}：补齐 ${summary.synced}，已最新 ${summary.current}` +
-      `${summary.unavailable ? `，停牌或暂无数据 ${summary.unavailable}` : ''}` +
-      `${summary.failed ? `，失败 ${summary.failed}` : ''}`
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    latestBusy.value = false
-  }
-}
-
-async function pollPrefetch() {
-  const p = await getPrefetchProgress()
-  prefetchProg.value = p
-  if (p.running) {
-    pollTimer = window.setTimeout(pollPrefetch, 1000)
-  }
-}
-
-/* ---- 每日自动更新状态 ---- */
-const updateStatus = ref<UpdateStatus | null>(null)
-const updateBusy = ref(false)
-
-async function loadUpdateStatus() {
-  try {
-    updateStatus.value = await getUpdateStatus()
-  } catch {
-    /* 忽略 */
-  }
-}
-
-async function doRunUpdate() {
-  if (updateBusy.value) return
-  updateBusy.value = true
-  try {
-    await runUpdate()
-    updateStatus.value = await getUpdateStatus()
-  } finally {
-    updateBusy.value = false
-  }
-}
-
-const fmtTime = (ts: number) => {
-  if (!ts) return '—'
-  const d = new Date(ts)
-  const p = (n: number) => String(n).padStart(2, '0')
-  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
 const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
-const pct = (p: PrefetchProgress) => (p.total > 0 ? Math.round((p.done / p.total) * 100) + '%' : '0%')
 const fmtPrice = (v: number) => v.toFixed(2)
 const fmtPct = (v: number) => (v > 0 ? '+' : '') + v.toFixed(2) + '%'
-const fmtAmount = (v: number) => (v / 1e8).toFixed(1) // 元 -> 亿
+const fmtAmount = (v: number) => (v / 1e8).toFixed(1)
+const fmtVolRatio = (v: number) => (v > 0 ? v.toFixed(2) : '--')
+const fmtPe = (v: number) => (v > 0 ? v.toFixed(1) : v < 0 ? '亏损' : '--')
+const fmtPb = (v: number) => (v > 0 ? v.toFixed(2) : '--')
+const fmtMktcap = (v: number) => (v > 0 ? (v / 1e8).toFixed(0) + '亿' : '--')
+const fmtWanYi = (v: number) => v.toFixed(2) + '万亿'
+
+function rowTags(s: SnapshotStock): string[] {
+  const tags: string[] = []
+  if (s.changePct >= 5) tags.push('强势')
+  if (s.volumeRatio >= 2) tags.push('放量')
+  if (s.turnover >= 5) tags.push('人气')
+  if (s.pe > 0 && s.pe < 20 && s.pb > 0 && s.pb < 2) tags.push('低估')
+  if (s.pb > 0 && s.pb < 1) tags.push('破净')
+  if (s.changePct <= -5) tags.push('超跌')
+  return tags.slice(0, 3)
+}
 
 loadSnapshot()
-void pollPrefetch()
-void loadUpdateStatus()
 
 onBeforeUnmount(() => window.clearTimeout(pollTimer))
 </script>
 
 <template>
   <div class="all-market">
+    <div class="am-overview">
+      <div class="ov-card"><span>上涨</span><b class="up">{{ overview.up }}</b></div>
+      <div class="ov-card"><span>下跌</span><b class="down">{{ overview.down }}</b></div>
+      <div class="ov-card"><span>平盘</span><b>{{ overview.flat }}</b></div>
+      <div class="ov-card"><span>涨停</span><b class="up">{{ overview.limitUp }}</b></div>
+      <div class="ov-card"><span>跌停</span><b class="down">{{ overview.limitDown }}</b></div>
+      <div class="ov-card ov-wide"><span>总成交额</span><b>{{ fmtWanYi(overview.totalAmount) }}</b></div>
+      <div class="ov-card ov-wide"><span>领涨行业</span><b class="up">{{ overview.topIndustry }}</b></div>
+    </div>
+
+    <div class="am-sector-strip">
+      <button class="am-sector-chip all" :class="{ active: industryFilter === '' }" @click="industryFilter = ''">全部</button>
+      <button
+        v-for="st in topSectors"
+        :key="st.industry"
+        class="am-sector-chip"
+        :class="{ active: industryFilter === st.industry }"
+        @click="industryFilter = industryFilter === st.industry ? '' : st.industry"
+      >
+        <span>{{ st.industry }}</span>
+        <b :class="pctCls(st.avg)">{{ fmtPct(st.avg) }}</b>
+      </button>
+    </div>
+
     <div class="am-toolbar">
       <input v-model="kw" type="text" placeholder="过滤名称/代码" class="am-search" />
       <template v-if="isMobile">
-        <button class="btn" @click="sheetMode = 'industry'">
-          行业{{ industryFilter ? '：' + industryFilter : '' }}
-        </button>
-        <button class="btn" @click="sheetMode = 'sort'">
-          排序：{{ SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? '' }}
-        </button>
+        <button class="btn" @click="sheetMode = 'industry'">行业{{ industryFilter ? '：' + industryFilter : '' }}</button>
+        <button class="btn" @click="sheetMode = 'focus'">聚焦{{ focusTag ? '：' + (FOCUS_TAGS.find((t) => t.key === focusTag)?.label ?? '') : '' }}</button>
+        <button class="btn" @click="sheetMode = 'sort'">排序：{{ SORT_OPTIONS.find((o) => o.key === sortKey)?.label ?? '' }}</button>
       </template>
       <template v-else>
         <select v-model="industryFilter" class="select">
@@ -193,85 +233,65 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
       </button>
     </div>
 
+    <div class="am-focus-bar">
+      <button
+        v-for="t in FOCUS_TAGS"
+        :key="t.key"
+        class="am-focus-chip"
+        :class="{ active: focusTag === t.key }"
+        @click="focusTag = focusTag === t.key ? '' : t.key"
+      >
+        {{ t.label }}
+      </button>
+    </div>
+
     <Transition name="sheet">
       <div v-if="isMobile && sheetMode" class="am-filter-mask" @click="sheetMode = null">
         <div class="am-filter-sheet" @click.stop>
           <div class="am-filter-head">
-            <span>{{ sheetMode === 'industry' ? '选择行业' : '选择排序' }}</span>
+            <span>{{ sheetMode === 'industry' ? '选择行业' : sheetMode === 'focus' ? '聚焦条件' : '选择排序' }}</span>
             <button class="btn" @click="sheetMode = null">完成</button>
           </div>
-          <div v-if="sheetMode === 'industry'" class="am-filter-chips">
-            <button
-              class="am-chip"
-              :class="{ active: industryFilter === '' }"
-              @click="industryFilter = ''; sheetMode = null"
-            >
-              全部
-            </button>
-            <button
-              v-for="ind in SW1_INDUSTRIES"
-              :key="ind"
-              class="am-chip"
-              :class="{ active: industryFilter === ind }"
-              @click="industryFilter = ind; sheetMode = null"
-            >
-              {{ ind }}
-            </button>
-          </div>
-          <div v-else class="am-filter-chips">
-            <button
-              v-for="o in SORT_OPTIONS"
-              :key="o.key"
-              class="am-chip"
-              :class="{ active: sortKey === o.key }"
-              @click="sortKey = o.key; sheetMode = null"
-            >
-              {{ o.label }}
-            </button>
+          <div class="am-filter-chips">
+            <template v-if="sheetMode === 'industry'">
+              <button class="am-chip" :class="{ active: industryFilter === '' }" @click="industryFilter = ''; sheetMode = null">全部</button>
+              <button
+                v-for="ind in SW1_INDUSTRIES"
+                :key="ind"
+                class="am-chip"
+                :class="{ active: industryFilter === ind }"
+                @click="industryFilter = ind; sheetMode = null"
+              >
+                {{ ind }}
+              </button>
+            </template>
+            <template v-else-if="sheetMode === 'focus'">
+              <button class="am-chip" :class="{ active: focusTag === '' }" @click="focusTag = ''; sheetMode = null">全部</button>
+              <button
+                v-for="t in FOCUS_TAGS"
+                :key="t.key"
+                class="am-chip"
+                :class="{ active: focusTag === t.key }"
+                @click="focusTag = t.key; sheetMode = null"
+              >
+                {{ t.label }}
+              </button>
+            </template>
+            <template v-else>
+              <button
+                v-for="o in SORT_OPTIONS"
+                :key="o.key"
+                class="am-chip"
+                :class="{ active: sortKey === o.key }"
+                @click="sortKey = o.key; sheetMode = null"
+              >
+                {{ o.label }}
+              </button>
+            </template>
           </div>
         </div>
       </div>
     </Transition>
-
-    <div class="am-prefetch">
-      <button class="btn" @click="doPrefetch" :disabled="prefetchProg.running">
-        {{ prefetchProg.running ? '预取中…' : '全量预取日K' }}
-      </button>
-      <button class="btn" @click="syncAllLatest" :disabled="latestBusy || status !== 'ready'">
-        {{ latestBusy ? '检测补齐中…' : '检测并补齐最新日K' }}
-      </button>
-      <div v-if="prefetchProg.running" class="am-progress">
-        <div class="am-progress-bar" :style="{ width: pct(prefetchProg) }"></div>
-        <span class="am-progress-text num">
-          {{ prefetchProg.done }}/{{ prefetchProg.total }}
-          <template v-if="prefetchProg.failed">（失败 {{ prefetchProg.failed }}）</template>
-        </span>
-      </div>
-      <span v-else-if="prefetchProg.total > 0" class="am-cached num">
-        已缓存 {{ prefetchProg.total - prefetchProg.failed }} 只日K
-      </span>
-      <span v-else class="am-hint">预取后策略/浏览不依赖网络</span>
-    </div>
-    <div v-if="latestResult" class="am-update-result">{{ latestResult }}</div>
-
-    <div class="am-update">
-      <span class="am-update-label">⏰ 每日自动更新</span>
-      <span v-if="updateStatus" class="am-update-time">
-        {{ updateStatus.plan.map((p) => p.time).join(' / ') }}（交易日）
-        <template v-if="updateStatus.lastRun"> · 上次 {{ fmtTime(updateStatus.lastRun) }}</template>
-        <template v-if="!updateStatus.isTradingDay"> · 今日非交易日</template>
-      </span>
-      <span v-else class="am-update-time">状态加载中…</span>
-      <button
-        class="btn"
-        @click="doRunUpdate"
-        :disabled="updateBusy || (updateStatus?.running ?? false)"
-        :title="updateStatus?.lastResult ?? ''"
-      >
-        {{ updateBusy || updateStatus?.running ? '更新中…' : '立即更新' }}
-      </button>
-    </div>
-    <div v-if="updateStatus?.lastResult" class="am-update-result">{{ updateStatus.lastResult }}</div>
 
     <div class="am-grid-head">
       <span>名称 / 代码</span>
@@ -312,6 +332,14 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
         <span class="num am-price" :class="pctCls(s.changePct)">{{ fmtPrice(s.price) }}</span>
         <span class="num am-pct" :class="pctCls(s.changePct)">{{ fmtPct(s.changePct) }}</span>
         <span class="num am-amount">{{ fmtAmount(s.amount) }}亿</span>
+        <span class="am-metrics">
+          <span class="am-metric">换手 <b>{{ s.turnover.toFixed(2) }}%</b></span>
+          <span class="am-metric">量比 <b>{{ fmtVolRatio(s.volumeRatio) }}</b></span>
+          <span class="am-metric">市值 <b>{{ fmtMktcap(s.mktcap) }}</b></span>
+          <span class="am-metric">PE <b>{{ fmtPe(s.pe) }}</b></span>
+          <span class="am-metric">PB <b>{{ fmtPb(s.pb) }}</b></span>
+          <span v-for="tag in rowTags(s)" :key="tag" class="am-tag">{{ tag }}</span>
+        </span>
       </button>
       <div class="am-end num">
         {{ visible.length }}/{{ sorted.length }} 条
@@ -327,6 +355,74 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  background: var(--panel);
+}
+
+.am-overview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.ov-card {
+  min-width: 58px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ov-wide {
+  min-width: 120px;
+}
+.ov-card span {
+  font-size: 10px;
+  color: var(--text-3);
+}
+.ov-card b {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.am-sector-strip {
+  display: flex;
+  gap: 8px;
+  padding: 8px 10px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  scrollbar-width: none;
+}
+.am-sector-strip::-webkit-scrollbar {
+  display: none;
+}
+.am-sector-chip {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 9px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.am-sector-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(30, 111, 255, 0.08);
+}
+.am-sector-chip.all {
+  font-weight: 600;
+}
+.am-sector-chip b {
+  font-weight: 600;
 }
 
 .am-toolbar {
@@ -351,80 +447,40 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   border-color: var(--primary);
 }
 
-.am-prefetch {
+.am-focus-bar {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
+  gap: 6px;
+  padding: 7px 10px;
+  overflow-x: auto;
   border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  scrollbar-width: none;
 }
-.am-progress {
-  position: relative;
-  flex: 1;
-  height: 18px;
-  border-radius: 9px;
-  background: var(--panel-2);
+.am-focus-bar::-webkit-scrollbar {
+  display: none;
+}
+.am-focus-chip {
+  flex: 0 0 auto;
+  padding: 4px 10px;
   border: 1px solid var(--border);
-  overflow: hidden;
-}
-.am-progress-bar {
-  height: 100%;
-  background: linear-gradient(90deg, #1e6fff, #4d94ff);
-  transition: width 0.4s;
-}
-.am-progress-text {
-  position: absolute;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 10px;
-  color: var(--text-1);
-}
-.am-cached,
-.am-hint {
-  font-size: 11px;
-  color: var(--text-3);
-  white-space: nowrap;
-}
-
-.am-update {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border);
-}
-.am-update-label {
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-2);
-  white-space: nowrap;
-}
-.am-update-time {
-  flex: 1;
-  font-size: 11px;
-  color: var(--text-3);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.am-update-result {
-  padding: 5px 10px;
-  font-size: 11px;
-  color: var(--text-3);
-  border-bottom: 1px solid var(--border);
+  border-radius: 13px;
   background: var(--panel-2);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.am-focus-chip.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(30, 111, 255, 0.08);
+  font-weight: 600;
 }
 
 .am-grid-head,
 .am-item {
   display: grid;
-  grid-template-columns: 1fr 62px 64px 70px;
-  gap: 6px;
+  grid-template-columns: 1.3fr 72px 78px 90px;
+  gap: 8px;
   align-items: center;
 }
 .am-grid-head {
@@ -482,11 +538,50 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   text-align: right;
   font-weight: 600;
 }
+.am-pct {
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+.am-item .am-pct.up {
+  background: rgba(239, 35, 42, 0.08);
+}
+.am-item .am-pct.down {
+  background: rgba(20, 177, 67, 0.08);
+}
 .am-amount {
   text-align: right;
   color: var(--text-2);
   font-size: 11px;
 }
+
+.am-metrics {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px dashed var(--border);
+}
+.am-metric {
+  font-size: 11px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.am-metric b {
+  color: var(--text-1);
+  font-weight: 600;
+  margin-left: 2px;
+}
+.am-tag {
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: rgba(30, 111, 255, 0.08);
+  color: var(--primary);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
 .am-end {
   padding: 8px;
   text-align: center;
@@ -502,7 +597,6 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   display: flex;
   align-items: flex-end;
 }
-
 .am-filter-sheet {
   width: 100%;
   max-height: 70vh;
@@ -511,7 +605,6 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   border-radius: 12px 12px 0 0;
   padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
 }
-
 .am-filter-head {
   display: flex;
   align-items: center;
@@ -520,13 +613,11 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   font-weight: 700;
   margin-bottom: 10px;
 }
-
 .am-filter-chips {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
 }
-
 .am-chip {
   padding: 7px 12px;
   border: 1px solid var(--border);
@@ -573,14 +664,18 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
 }
 
 @media (max-width: 820px) {
-  .am-toolbar {
+  .am-overview,
+  .am-sector-strip,
+  .am-toolbar,
+  .am-focus-bar {
     flex-wrap: nowrap;
     overflow-x: auto;
-    gap: 6px;
-    -webkit-overflow-scrolling: touch;
     scrollbar-width: none;
   }
-  .am-toolbar::-webkit-scrollbar {
+  .am-overview::-webkit-scrollbar,
+  .am-sector-strip::-webkit-scrollbar,
+  .am-toolbar::-webkit-scrollbar,
+  .am-focus-bar::-webkit-scrollbar {
     display: none;
   }
   .am-search {
@@ -590,13 +685,6 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
   .am-toolbar .select,
   .am-toolbar .btn {
     flex-shrink: 0;
-  }
-
-  /* 移动端默认收起数据维护类操作，列表更纯净 */
-  .am-prefetch,
-  .am-update,
-  .am-update-result {
-    display: none;
   }
 
   .am-grid-head,

@@ -80,6 +80,15 @@ export async function fetchDataCoverage(codes: string[], period = 'day'): Promis
   return await res.json()
 }
 
+export async function fetchFundFlow(code: string, days = 20): Promise<import('../types').FundFlowResult> {
+  const res = await fetch(`/api/data/fund-flow?code=${encodeURIComponent(code)}&days=${days}`)
+  if (!res.ok) {
+    const error = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(error?.error ?? `fund-flow http ${res.status}`)
+  }
+  return await res.json()
+}
+
 export async function syncLatestDailyKlines(codes?: string[]): Promise<LatestKlineSyncResult> {
   const res = await fetch('/api/data/kline/sync-latest', {
     method: 'POST',

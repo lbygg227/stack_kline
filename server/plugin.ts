@@ -19,6 +19,7 @@ import { QuickTunnel, type QuickTunnelInfo } from './tunnel.ts'
 import { analyzeStock } from './analysis.ts'
 import { generateAiCommentary, generateAiStockBrief } from './anspire.ts'
 import { searchStockNews } from './news.ts'
+import { fetchFundFlow } from './eastmoney-fund.ts'
 import { runBacktest } from './backtest.ts'
 import { runPortfolioBacktest } from './portfolio-backtest.ts'
 import { optimizeStrategy } from './strategy-optimizer.ts'
@@ -212,6 +213,19 @@ export function marketDataPlugin(): Plugin {
               return
             }
             sendJson(res, 200, await syncLatestDailyKlines(codes))
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        // ---- 资金流向 ----
+        if (path === '/api/data/fund-flow') {
+          const code = url.searchParams.get('code')
+          const days = Number(url.searchParams.get('days')) || 20
+          if (!code) { sendJson(res, 400, { error: '缺少 code 参数' }); return }
+          try {
+            sendJson(res, 200, await fetchFundFlow(code, days))
           } catch (e) {
             sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
           }

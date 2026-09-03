@@ -196,7 +196,7 @@ function cancelOrder() {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: 240px;
+  width: 210px;
   flex-shrink: 0;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -324,7 +324,7 @@ function cancelOrder() {
   color: var(--text-2);
 }
 .tp-field input {
-  width: 110px;
+  width: 90px;
   height: 28px;
   padding: 0 8px;
   border: 1px solid var(--border);

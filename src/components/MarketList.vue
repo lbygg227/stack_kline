@@ -1,41 +1,33 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import StockList from './StockList.vue'
-import AllMarketPanel from './AllMarketPanel.vue'
 
-const tab = ref<'watch' | 'all'>('watch')
-
-const TABS = [
-  { key: 'watch', label: '自选' },
-  { key: 'all', label: '全市场' },
-] as const
+const collapsed = ref(false)
 </script>
 
 <template>
-  <aside class="market-list">
-    <div class="ml-tabs">
-      <button
-        v-for="t in TABS"
-        :key="t.key"
-        class="ml-tab"
-        :class="{ active: tab === t.key }"
-        @click="tab = t.key"
-      >
-        {{ t.label }}
-      </button>
-    </div>
-    <div class="ml-body">
-      <StockList v-if="tab === 'watch'" />
-      <AllMarketPanel v-else />
+  <aside class="market-list" :class="{ collapsed }">
+    <button class="ml-toggle" @click="collapsed = !collapsed" :title="collapsed ? '展开自选' : '收起自选'">
+      {{ collapsed ? '▶' : '◀' }}
+    </button>
+    <template v-if="!collapsed">
+      <div class="ml-head">自选股</div>
+      <div class="ml-body">
+        <StockList />
+      </div>
+    </template>
+    <div v-else class="ml-collapsed-labels">
+      <span class="ml-collapsed-label" @click="collapsed = false">自选</span>
     </div>
   </aside>
 </template>
 
 <style scoped>
 .market-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: 300px;
+  width: 200px;
   flex-shrink: 0;
   background: var(--panel);
   border: 1px solid var(--border);
@@ -43,32 +35,64 @@ const TABS = [
   box-shadow: var(--shadow);
   overflow: hidden;
   min-height: 0;
+  transition: width 0.2s ease;
+}
+.market-list.collapsed {
+  width: 36px;
 }
 
-.ml-tabs {
+.ml-toggle {
+  position: absolute;
+  top: 6px;
+  right: 4px;
+  z-index: 5;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--panel-2);
+  color: var(--text-3);
+  font-size: 10px;
+  line-height: 20px;
+  text-align: center;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.ml-toggle:hover { color: var(--primary); }
+.collapsed .ml-toggle {
+  position: static;
+  width: 100%;
+  margin-top: 6px;
+  border: none;
+  border-radius: 0;
+}
+
+.ml-collapsed-labels {
   display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-top: 12px;
+}
+.ml-collapsed-label {
+  writing-mode: vertical-rl;
+  font-size: 12px;
+  color: var(--text-3);
+  cursor: pointer;
+  padding: 4px 2px;
+  border-radius: 3px;
+  transition: color 0.15s;
+}
+.ml-collapsed-label:hover { color: var(--primary); }
+
+.ml-head {
+  padding: 9px 12px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-1);
   border-bottom: 1px solid var(--border);
   background: var(--panel-2);
-}
-.ml-tab {
-  flex: 1;
-  padding: 9px 0;
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: transparent;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.ml-tab:hover {
-  color: var(--primary);
-}
-.ml-tab.active {
-  color: var(--primary);
-  border-bottom-color: var(--primary);
-  background: rgba(30, 111, 255, 0.04);
 }
 
 .ml-body {
@@ -89,5 +113,8 @@ const TABS = [
     width: 100%;
     flex: 1;
   }
+  .market-list.collapsed { width: 100%; }
+  .ml-toggle { display: none; }
+  .ml-collapsed-labels { display: none; }
 }
 </style>

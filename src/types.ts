@@ -737,3 +737,18 @@ export interface UpdateStatus {
   isTradingDay: boolean
   plan: UpdatePlanStatus[]
 }
+
+export interface FundFlowDay {
+  date: string
+  mainNet: number
+  smallNet: number
+  midNet: number
+  bigNet: number
+  superBigNet: number
+}
+
+export interface FundFlowResult {
+  code: string
+  name: string
+  days: FundFlowDay[]
+}
