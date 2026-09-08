@@ -46,8 +46,8 @@ export async function fetchFundFlow(code: string, days = 20): Promise<FundFlowRe
   }
 
   const hosts = [
-    'https://push2his.eastmoney.com',
     'https://push2delay.eastmoney.com',
+    'https://push2his.eastmoney.com',
   ]
 
   let lastErr: unknown
