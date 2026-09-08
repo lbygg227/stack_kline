@@ -165,12 +165,16 @@ const THEME_INDUSTRY_RULES: Array<{ industry: string; patterns: RegExp[] }> = [
   { industry: '电子', patterns: [/半导体|芯片|光刻|存储芯片|消费电子|PCB/] },
   { industry: '计算机', patterns: [/人工智能|大模型|算力|信创|软件国产化|数据要素/] },
   { industry: '通信', patterns: [/5G|6G|光模块|运营商资本开支|卫星互联网/] },
-  { industry: '医药生物', patterns: [/集采|医保谈判|创新药|医疗器械|CXO|生物医药/] },
+  { industry: '医药生物', patterns: [/集采|医保谈判|创新药|医疗器械|CXO|生物医药|减肥药|脑机接口/] },
   { industry: '食品饮料', patterns: [/白酒|啤酒|软饮料|乳制品|餐饮消费/] },
   { industry: '有色金属', patterns: [/铜价|铝价|锂价|黄金价格|稀土|工业金属/] },
   { industry: '石油石化', patterns: [/原油|成品油|天然气价格|炼化/] },
   { industry: '煤炭', patterns: [/动力煤|焦煤|煤价|煤矿/] },
-  { industry: '国防军工', patterns: [/军工|航空发动机|导弹|舰船|国防预算/] },
+  { industry: '国防军工', patterns: [/军工|航空发动机|导弹|舰船|国防预算|商业航天|低空经济/] },
+  { industry: '机械设备', patterns: [/机器人|人形机器人|减速器|伺服|工业母机|工程机械/] },
+  { industry: '传媒', patterns: [/游戏版号|网络游戏|影视|短剧|文化传媒|AIGC/] },
+  { industry: '社会服务', patterns: [/旅游|酒店|景区|免税|教育服务/] },
+  { industry: '美容护理', patterns: [/医美|化妆品|美容护理/] },
 ]
 
 export function inferIndustriesFromThemes(text: string): string[] {
