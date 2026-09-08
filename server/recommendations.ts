@@ -9,6 +9,7 @@ import { buildOpinionStockReco } from './opinion-stock-reco.ts'
 import { buildFundStockReco } from './fund-stock-reco.ts'
 import { buildDragonTigerReco } from './dragon-tiger-stock-reco.ts'
 import { buildIndustryStats } from './screening-strategies.ts'
+import { readJson, writeJson } from './store.ts'
 
 export type RecommendationStyle = 'trend' | 'limit_up' | 'pullback' | 'leader' | 'event' | 'fund' | 'opinion'
 export type RecommendationChannel = 'technical' | 'event' | 'opinion' | 'fund' | 'dragon'
@@ -55,6 +56,22 @@ export interface RecommendationListResponse {
 }
 
 const STYLE_KEYS: RecommendationStyle[] = ['trend', 'limit_up', 'pullback', 'leader', 'event', 'fund', 'opinion']
+const HISTORY_FILE = 'recommendation-history.json'
+
+type RecommendationHistory = {
+  version: 1
+  lastRecommended: Record<string, string>
+}
+
+function loadHistory(): RecommendationHistory {
+  const raw = readJson<RecommendationHistory>(HISTORY_FILE)
+  if (!raw || raw.version !== 1 || !raw.lastRecommended) return { version: 1, lastRecommended: {} }
+  return raw
+}
+
+function saveHistory(history: RecommendationHistory): void {
+  writeJson(HISTORY_FILE, history)
+}
 const STYLE_LABEL: Record<RecommendationStyle, string> = {
   trend: '趋势',
   limit_up: '打板',
@@ -276,7 +293,7 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
   }
 }
 
-export function buildTodayRecommendations(stocks: SnapshotStock[]): RecommendationListResponse {
+export function buildTodayRecommendations(stocks: SnapshotStock[], options: { coolingDays?: number } = {}): RecommendationListResponse {
   const all = [
     ...buildTechnicalRecords(stocks),
     ...buildEventRecords(stocks),
@@ -291,7 +308,18 @@ export function buildTodayRecommendations(stocks: SnapshotStock[]): Recommendati
     else byCode.set(item.code, mergeRecord(prev, item))
   }
 
-  const items = [...byCode.values()].sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
+  const history = loadHistory()
+  const signalDate = new Date().toISOString().slice(0, 10)
+  const coolingDays = Math.max(0, options.coolingDays ?? 0)
+  const eligible = coolingDays > 0
+    ? [...byCode.values()].filter((item) => {
+        const last = history.lastRecommended[item.code]
+        if (!last) return true
+        const diff = Math.floor((Date.parse(signalDate) - Date.parse(last)) / 86_400_000)
+        return diff >= coolingDays
+      })
+    : [...byCode.values()]
+  const items = eligible.sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
   const grouped: Record<RecommendationStyle, RecommendationRecord[]> = {
     trend: [],
     limit_up: [],
@@ -301,13 +329,27 @@ export function buildTodayRecommendations(stocks: SnapshotStock[]): Recommendati
     fund: [],
     opinion: [],
   }
+  const styleIndustryCount = new Map<string, Map<string, number>>()
   for (const item of items) {
-    grouped[item.style].push(item)
+    const key = item.style
+    const industry = item.industry ?? '其他'
+    const counter = styleIndustryCount.get(key) ?? new Map<string, number>()
+    const used = counter.get(industry) ?? 0
+    if (used >= 2) continue
+    counter.set(industry, used + 1)
+    styleIndustryCount.set(key, counter)
+    grouped[key].push(item)
   }
   for (const key of STYLE_KEYS) {
     grouped[key] = grouped[key].slice(0, 12)
   }
   const top = STYLE_KEYS.flatMap((key) => grouped[key]).sort((a, b) => b.score - a.score).slice(0, 80)
+
+  for (const item of top) {
+    history.lastRecommended[item.code] = signalDate
+  }
+  saveHistory(history)
+
   return {
     generatedAt: Date.now(),
     total: top.length,

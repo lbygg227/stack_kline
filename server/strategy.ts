@@ -19,6 +19,8 @@ export interface StrategyConditions {
   maxVolumeRatio?: number
   minPe?: number
   maxPe?: number
+  minPb?: number
+  maxPb?: number
   minMktcap?: number // 亿
   maxMktcap?: number // 亿
   minAmount?: number // 亿
@@ -248,6 +250,8 @@ function matchSnapshot(s: SnapshotStock, c: StrategyConditions): boolean {
   // PE：新浪对亏损股给负值/0，选股时通常要求 >0
   if (isNum(c.minPe) && s.pe < c.minPe!) return false
   if (isNum(c.maxPe) && s.pe > c.maxPe!) return false
+  if (isNum(c.minPb) && s.pb < c.minPb!) return false
+  if (isNum(c.maxPb) && s.pb > c.maxPb!) return false
   const mktcapYi = s.mktcap / 1e4
   if (isNum(c.minMktcap) && mktcapYi < c.minMktcap!) return false
   if (isNum(c.maxMktcap) && mktcapYi > c.maxMktcap!) return false

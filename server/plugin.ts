@@ -1372,6 +1372,8 @@ function normalizeConditions(b: Partial<StrategyConditions>): StrategyConditions
     maxVolumeRatio: num(b.maxVolumeRatio),
     minPe: num(b.minPe),
     maxPe: num(b.maxPe),
+    minPb: num(b.minPb),
+    maxPb: num(b.maxPb),
     minMktcap: num(b.minMktcap),
     maxMktcap: num(b.maxMktcap),
     minAmount: num(b.minAmount),

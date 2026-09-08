@@ -176,6 +176,8 @@ export interface StrategyConditions {
   maxVolumeRatio?: number
   minPe?: number
   maxPe?: number
+  minPb?: number
+  maxPb?: number
   minMktcap?: number // 亿
   maxMktcap?: number // 亿
   minAmount?: number // 亿

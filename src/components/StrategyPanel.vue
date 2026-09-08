@@ -32,6 +32,8 @@ const f = ref({
   minVolumeRatio: '',
   minPe: '',
   maxPe: '',
+  minPb: '',
+  maxPb: '',
   minMktcap: '',
   maxMktcap: '',
   minAmount: '',
@@ -387,6 +389,8 @@ async function aiSearch() {
       minVolumeRatio: n2s(c.minVolumeRatio),
       minPe: n2s(c.minPe),
       maxPe: n2s(c.maxPe),
+      minPb: n2s(c.minPb),
+      maxPb: n2s(c.maxPb),
       minMktcap: n2s(c.minMktcap),
       maxMktcap: n2s(c.maxMktcap),
       minAmount: n2s(c.minAmount),
@@ -419,6 +423,8 @@ const conditions = computed<StrategyConditions>(() => ({
   minVolumeRatio: num(f.value.minVolumeRatio),
   minPe: num(f.value.minPe),
   maxPe: num(f.value.maxPe),
+  minPb: num(f.value.minPb),
+  maxPb: num(f.value.maxPb),
   minMktcap: num(f.value.minMktcap),
   maxMktcap: num(f.value.maxMktcap),
   minAmount: num(f.value.minAmount),
@@ -457,6 +463,8 @@ function resetForm() {
     minVolumeRatio: '',
     minPe: '',
     maxPe: '',
+    minPb: '',
+    maxPb: '',
     minMktcap: '',
     maxMktcap: '',
     minAmount: '',
@@ -780,6 +788,14 @@ const fmtYi = (v: number) => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`
             <input v-model="f.minPe" type="number" placeholder="≥" class="num" />
             <span>~</span>
             <input v-model="f.maxPe" type="number" placeholder="≤" class="num" />
+          </div>
+        </div>
+        <div class="st-row">
+          <label>市净率</label>
+          <div class="st-range">
+            <input v-model="f.minPb" type="number" placeholder="≥" class="num" />
+            <span>~</span>
+            <input v-model="f.maxPb" type="number" placeholder="≤" class="num" />
           </div>
         </div>
         <div class="st-row">
