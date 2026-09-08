@@ -12,7 +12,7 @@ import { initNetwork } from './net.ts'
 import { readJson, writeJson } from './store.ts'
 import { buildSnapshotFromTickflow, fetchMarketSnapshot, type SnapshotStock } from './eastmoney.ts'
 import { batchKlines } from './tencent.ts'
-import { runStrategy } from './strategy.ts'
+import { runStrategy as executeStrategy } from './strategy.ts'
 import {
   fetchTickDepth,
   fetchTickInstruments,
@@ -144,6 +144,65 @@ async function ensureIndustryMap(): Promise<IndustryMap | null> {
     return null
   } finally {
     industryBuilding = false
+  }
+}
+
+/* ============ 选股进度 ============ */
+
+export interface StrategyRunProgress {
+  running: boolean
+  phase: 'idle' | 'preparing' | 'ai' | 'screening' | 'done'
+  done: number
+  total: number
+  hits: number
+  message: string
+}
+
+let strategyProgress: StrategyRunProgress = {
+  running: false,
+  phase: 'idle',
+  done: 0,
+  total: 0,
+  hits: 0,
+  message: '',
+}
+
+function setStrategyProgress(partial: Partial<StrategyRunProgress>): void {
+  strategyProgress = { ...strategyProgress, ...partial }
+}
+
+function beginStrategyPhase(phase: StrategyRunProgress['phase'], message: string): void {
+  setStrategyProgress({ running: true, phase, done: 0, total: 0, hits: 0, message })
+}
+
+async function runStrategy(
+  ...args: Parameters<typeof executeStrategy>
+): Promise<Awaited<ReturnType<typeof executeStrategy>>> {
+  const [snapshot, conds, getKline] = args
+  beginStrategyPhase('preparing', '正在准备候选股…')
+  try {
+    const results = await executeStrategy(snapshot, conds, getKline, (done, total, hits = 0) => {
+      setStrategyProgress({
+        running: true,
+        phase: 'screening',
+        done,
+        total,
+        hits,
+        message: total > 0 ? `正在扫描 ${done}/${total}` : '正在筛选…',
+      })
+    })
+    setStrategyProgress({
+      running: false,
+      phase: 'done',
+      done: strategyProgress.total || results.length,
+      total: strategyProgress.total || results.length,
+      hits: results.length,
+      message: `完成，命中 ${results.length} 只`,
+    })
+    return results
+  } catch (e) {
+    setStrategyProgress({ running: false, phase: 'idle', message: '选股失败' })
+    throw e
   }
 }
 
@@ -303,4 +362,6 @@ export const service = {
   stocksWithIndustry: () =>
     (snapshotState?.stocks ?? []).map((s) => ({ ...s, industry: industryMap?.map[s.code] ?? '其他' })),
   runStrategy,
+  getStrategyProgress: () => strategyProgress,
+  beginStrategyPhase,
 }

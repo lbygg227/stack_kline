@@ -1,10 +1,20 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useMarket, INDEX_LIST } from '../composables/useMarket'
+import { useResearch } from '../composables/useResearch'
 import { fetchTunnelInfo, searchStocks } from '../api'
 import type { StockInfo } from '../types'
 
 const { selectStock, displayQuote, setView, state, isMobile } = useMarket()
+const {
+  candidates,
+  activeCandidateCode,
+  activeIndex,
+  nextCandidate,
+  prevCandidate,
+  openWorkbench,
+  refreshCandidates,
+} = useResearch()
 
 const kw = ref('')
 const results = ref<StockInfo[]>([])
@@ -21,6 +31,7 @@ let timer: number | undefined
 onMounted(async () => {
   const info = await fetchTunnelInfo()
   remoteUrl.value = info.url ?? ''
+  void refreshCandidates()
 })
 
 async function copyRemoteUrl() {
@@ -101,11 +112,28 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
 
     <button
       class="btn nav-btn"
+      :class="{ active: state.view === 'events' }"
+      @click="setView(state.view === 'events' ? 'market' : 'events')"
+    >
+      资讯事件
+    </button>
+
+    <button
+      class="btn nav-btn"
       :class="{ active: state.view === 'strategy' }"
       @click="setView(state.view === 'strategy' ? 'market' : 'strategy')"
     >
       选股器
     </button>
+
+    <div v-if="!isMobile && candidates.length" class="queue-chip">
+      <button class="btn" @click="prevCandidate">‹</button>
+      <button class="queue-mid" @click="openWorkbench">
+        候选 {{ activeIndex >= 0 ? activeIndex + 1 : 0 }}/{{ candidates.length }}
+        <small v-if="activeCandidateCode">{{ activeCandidateCode.toUpperCase() }}</small>
+      </button>
+      <button class="btn" @click="nextCandidate">›</button>
+    </div>
 
     <button
       class="btn nav-btn"
@@ -191,6 +219,37 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
 .nav-btn {
   flex-shrink: 0;
   font-weight: 600;
+}
+.queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.queue-chip .btn {
+  min-width: 28px;
+  padding: 4px 6px;
+}
+.queue-mid {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 88px;
+  padding: 2px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--text-1);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.queue-mid small {
+  color: var(--text-3);
+  font-weight: 400;
 }
 .remote-chip {
   display: flex;

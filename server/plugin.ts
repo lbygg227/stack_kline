@@ -19,7 +19,51 @@ import { QuickTunnel, type QuickTunnelInfo } from './tunnel.ts'
 import { analyzeStock } from './analysis.ts'
 import { generateAiCommentary, generateAiStockBrief } from './anspire.ts'
 import { searchStockNews } from './news.ts'
+import {
+  collectMarketEvents,
+  getMarketEvent,
+  listMarketEvents,
+  MarketEventCollectScheduler,
+  type MarketEventKind,
+} from './market-events.ts'
+import { buildEventStockReco } from './event-stock-reco.ts'
+import { buildOpinionStockReco } from './opinion-stock-reco.ts'
+import {
+  attachSustainability,
+  candidateReviewStats,
+  listWatchCandidates,
+  removeWatchCandidate,
+  setWatchCandidateStatus,
+  upsertWatchCandidate,
+  type CandidateStatus,
+} from './watch-candidates.ts'
+import { buildSustainabilityReport } from './sustainability.ts'
+import {
+  getJin10News,
+  getJin10Quote,
+  hasJin10,
+  listJin10Calendar,
+  listJin10Flash,
+  listJin10News,
+  searchJin10Flash,
+  searchJin10News,
+} from './jin10.ts'
 import { fetchFundFlow } from './eastmoney-fund.ts'
+import {
+  buildFundStockReco,
+  FundFlowRankScheduler,
+  fundFlowRankStatus,
+  getFundFlowCacheEntry,
+  refreshFundFlowRank,
+} from './fund-stock-reco.ts'
+import { hasFuyao, type DragonTigerBoardType } from './fuyao.ts'
+import {
+  buildDragonTigerReco,
+  DragonTigerRankScheduler,
+  dragonTigerRankStatus,
+  getDragonTigerCacheEntry,
+  refreshDragonTigerRank,
+} from './dragon-tiger-stock-reco.ts'
 import { runBacktest } from './backtest.ts'
 import { runPortfolioBacktest } from './portfolio-backtest.ts'
 import { optimizeStrategy } from './strategy-optimizer.ts'
@@ -116,10 +160,29 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 
 export function marketDataPlugin(): Plugin {
   const opinionScheduler = new OpinionSyncScheduler()
+  const eventCollectScheduler = new MarketEventCollectScheduler(20)
+  const fundFlowScheduler = new FundFlowRankScheduler()
+  const dragonTigerScheduler = new DragonTigerRankScheduler()
   const configureApiServer = (server: ViteDevServer) => {
       attachRemoteTunnel(server)
       opinionScheduler.start(() => service.stocksWithIndustry())
-      server.httpServer?.once('close', () => opinionScheduler.stop())
+      eventCollectScheduler.start(() => ({
+        stocks: service.stocksWithIndustry(),
+        watchlist: listWatchCandidates({ limit: 100 }).map((c) => c.code),
+      }))
+      fundFlowScheduler.start(() => ({
+        stocks: service.stocksWithIndustry(),
+        watchlist: listWatchCandidates({ limit: 100 }).map((c) => c.code),
+      }))
+      dragonTigerScheduler.start(() => ({
+        stocks: service.stocksWithIndustry(),
+      }))
+      server.httpServer?.once('close', () => {
+        opinionScheduler.stop()
+        eventCollectScheduler.stop()
+        fundFlowScheduler.stop()
+        dragonTigerScheduler.stop()
+      })
       server.middlewares.use(async (req, res, next) => {
         const path = (req.url ?? '/').split('?')[0]
         if (!path.startsWith('/api/')) {
@@ -134,6 +197,11 @@ export function marketDataPlugin(): Plugin {
             time: Date.now(),
             snapshotReady: Boolean(service.getSnapshotState()),
             opinionScheduler: 'running',
+            eventCollectScheduler: 'running',
+            fundFlowScheduler: 'running',
+            fundFlowRank: fundFlowRankStatus(),
+            dragonTigerScheduler: 'running',
+            dragonTigerRank: dragonTigerRankStatus(),
           })
           return
         }
@@ -225,10 +293,139 @@ export function marketDataPlugin(): Plugin {
           const days = Number(url.searchParams.get('days')) || 20
           if (!code) { sendJson(res, 400, { error: '缺少 code 参数' }); return }
           try {
-            sendJson(res, 200, await fetchFundFlow(code, days))
+            const cached = getFundFlowCacheEntry(code)
+            if (cached && cached.days.length) {
+              sendJson(res, 200, {
+                code: cached.code,
+                name: cached.name,
+                days: cached.days.slice(-days),
+                fromCache: true,
+                updatedAt: cached.updatedAt,
+              })
+              return
+            }
+            sendJson(res, 200, { ...(await fetchFundFlow(code, days)), fromCache: false })
           } catch (e) {
             sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
           }
+          return
+        }
+
+        if (path === '/api/fund/status') {
+          sendJson(res, 200, fundFlowRankStatus())
+          return
+        }
+
+        if (path === '/api/fund/refresh' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { watchlist?: string[]; topAmount?: number }
+            const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+            const result = await refreshFundFlowRank({
+              stocks: snap ? service.stocksWithIndustry() : [],
+              watchlist: Array.isArray(body.watchlist) ? body.watchlist : listWatchCandidates({ limit: 100 }).map((c) => c.code),
+              topAmount: Number(body.topAmount) || 300,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/fund/stock-reco') {
+          try {
+            const result = buildFundStockReco({
+              days: Number(url.searchParams.get('days')) || 5,
+              limit: Number(url.searchParams.get('limit')) || 40,
+              minMainNetSum: url.searchParams.get('minMainNet') != null
+                ? Number(url.searchParams.get('minMainNet'))
+                : undefined,
+              minConsecutive: url.searchParams.get('minConsecutive') != null
+                ? Number(url.searchParams.get('minConsecutive'))
+                : undefined,
+              excludeDownPct: url.searchParams.get('excludeDown') != null
+                ? Number(url.searchParams.get('excludeDown'))
+                : undefined,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        // ---- 龙虎榜（扶摇）----
+        if (path === '/api/dragon/status') {
+          sendJson(res, 200, dragonTigerRankStatus())
+          return
+        }
+
+        if (path === '/api/dragon/refresh' && req.method === 'POST') {
+          try {
+            if (!hasFuyao()) {
+              sendJson(res, 503, { error: '未配置 FUYAO_API_KEY' })
+              return
+            }
+            const body = JSON.parse((await readBody(req)) || '{}') as {
+              date?: string
+              boardType?: DragonTigerBoardType
+            }
+            const boardType = (['all', 'org', 'hot_money'].includes(body.boardType || '')
+              ? body.boardType
+              : 'all') as DragonTigerBoardType
+            const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+            const result = await refreshDragonTigerRank({
+              date: body.date,
+              boardType,
+              stocks: snap ? service.stocksWithIndustry() : [],
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/dragon/stock-reco') {
+          try {
+            const boardRaw = url.searchParams.get('boardType') || 'all'
+            const boardType = (['all', 'org', 'hot_money'].includes(boardRaw)
+              ? boardRaw
+              : 'all') as DragonTigerBoardType
+            const preferRaw = url.searchParams.get('prefer')
+            const prefer = (['net', 'org', 'hot'].includes(preferRaw || '')
+              ? preferRaw
+              : undefined) as 'net' | 'org' | 'hot' | undefined
+            const result = buildDragonTigerReco({
+              boardType,
+              prefer,
+              limit: Number(url.searchParams.get('limit')) || 40,
+              minNetValue: url.searchParams.get('minNet') != null
+                ? Number(url.searchParams.get('minNet'))
+                : undefined,
+              excludeDownPct: url.searchParams.get('excludeDown') != null
+                ? Number(url.searchParams.get('excludeDown'))
+                : undefined,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/dragon/item') {
+          const code = (url.searchParams.get('code') ?? '').trim().toLowerCase()
+          if (!code) {
+            sendJson(res, 400, { error: '缺少 code' })
+            return
+          }
+          const entry = getDragonTigerCacheEntry(code)
+          if (!entry) {
+            sendJson(res, 404, { error: '当日龙虎榜缓存无此标的' })
+            return
+          }
+          sendJson(res, 200, entry)
           return
         }
 
@@ -266,6 +463,11 @@ export function marketDataPlugin(): Plugin {
         // ---- 策略 ----
         if (path === '/api/strategy-defs') {
           sendJson(res, 200, { strategies: SCREENING_STRATEGIES })
+          return
+        }
+
+        if (path === '/api/strategy/progress') {
+          sendJson(res, 200, service.getStrategyProgress())
           return
         }
 
@@ -348,6 +550,7 @@ export function marketDataPlugin(): Plugin {
               sendJson(res, 400, { error: '请输入选股条件' })
               return
             }
+            service.beginStrategyPhase('ai', '正在解析选股条件…')
             const { conds, explanation } = await parseNaturalLanguage(text)
             if (conds.pool === 'watchlist') conds.watchlist = Array.isArray(watchlist) ? watchlist : []
             const results = await service.runStrategy(
@@ -550,10 +753,21 @@ export function marketDataPlugin(): Plugin {
             recordId: record.id,
             version: revision.version,
           })))
+          const marketEventItems = listMarketEvents({ code, days: 60, limit: 50 }).events.map((event) => ({
+            id: `event:${event.id}`,
+            type: 'event' as const,
+            timestamp: event.publishedAt,
+            title: event.title,
+            summary: event.snippet || event.title,
+            stance: (event.kind === 'regulatory' ? 'bearish' : 'neutral') as 'bullish' | 'bearish' | 'neutral',
+            sourceUrl: event.url,
+            eventKind: event.kind,
+          }))
           sendJson(res, 200, {
             code,
             records,
-            timeline: [...opinionEvents, ...researchEvents].sort((a, b) => b.timestamp - a.timestamp),
+            timeline: [...opinionEvents, ...researchEvents, ...marketEventItems]
+              .sort((a, b) => b.timestamp - a.timestamp),
           })
           return
         }
@@ -676,6 +890,242 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+        if (path === '/api/jin10/status') {
+          sendJson(res, 200, { configured: hasJin10() })
+          return
+        }
+
+        if (path === '/api/jin10/flash') {
+          if (!hasJin10()) {
+            sendJson(res, 503, { error: '未配置 JIN10_MCP_TOKEN' })
+            return
+          }
+          try {
+            const keyword = url.searchParams.get('q')?.trim()
+            if (keyword) {
+              sendJson(res, 200, { items: await searchJin10Flash(keyword), provider: 'jin10' })
+            } else {
+              sendJson(res, 200, {
+                ...(await listJin10Flash(url.searchParams.get('cursor') || undefined)),
+                provider: 'jin10',
+              })
+            }
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/jin10/news') {
+          if (!hasJin10()) {
+            sendJson(res, 503, { error: '未配置 JIN10_MCP_TOKEN' })
+            return
+          }
+          try {
+            const id = url.searchParams.get('id')
+            const keyword = url.searchParams.get('q')?.trim()
+            if (id) {
+              sendJson(res, 200, { article: await getJin10News(id), provider: 'jin10' })
+            } else if (keyword) {
+              sendJson(res, 200, {
+                items: await searchJin10News(keyword, url.searchParams.get('cursor') || undefined),
+                provider: 'jin10',
+              })
+            } else {
+              sendJson(res, 200, {
+                ...(await listJin10News(url.searchParams.get('cursor') || undefined)),
+                provider: 'jin10',
+              })
+            }
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/jin10/calendar') {
+          if (!hasJin10()) {
+            sendJson(res, 503, { error: '未配置 JIN10_MCP_TOKEN' })
+            return
+          }
+          try {
+            sendJson(res, 200, { items: await listJin10Calendar(), provider: 'jin10' })
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/jin10/quote') {
+          if (!hasJin10()) {
+            sendJson(res, 503, { error: '未配置 JIN10_MCP_TOKEN' })
+            return
+          }
+          const code = (url.searchParams.get('code') ?? '').trim()
+          if (!code) {
+            sendJson(res, 400, { error: '请提供 code，例如 XAUUSD' })
+            return
+          }
+          try {
+            sendJson(res, 200, { quote: await getJin10Quote(code), provider: 'jin10' })
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/events/collect' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { watchlist?: string[] }
+            const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+            const result = await collectMarketEvents({
+              stocks: snap ? service.stocksWithIndustry() : [],
+              watchlist: Array.isArray(body.watchlist) ? body.watchlist.filter((x) => typeof x === 'string') : [],
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/events/stock-reco') {
+          try {
+            const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+            const watchlistParam = url.searchParams.get('watchlist') || ''
+            const watchlist = watchlistParam
+              .split(',')
+              .map((c) => c.trim())
+              .filter(Boolean)
+            const result = buildEventStockReco({
+              days: Number(url.searchParams.get('days')) || 7,
+              limit: Number(url.searchParams.get('limit')) || 40,
+              watchlist,
+              stocks: snap ? service.stocksWithIndustry() : [],
+              kind: (() => {
+                const k = url.searchParams.get('kind')
+                return k === 'announcement' || k === 'regulatory' || k === 'news' ? k : undefined
+              })(),
+              industry: url.searchParams.get('industry') || undefined,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/candidates/review-stats') {
+          sendJson(res, 200, candidateReviewStats())
+          return
+        }
+
+        if (path === '/api/candidates/status' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { code?: string; status?: CandidateStatus }
+            if (!body.code || !body.status) {
+              sendJson(res, 400, { error: '需要 code 与 status' })
+              return
+            }
+            sendJson(res, 200, setWatchCandidateStatus(body.code, body.status))
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/candidates') {
+          try {
+            if (req.method === 'GET') {
+              const status = url.searchParams.get('status')
+              sendJson(res, 200, {
+                candidates: listWatchCandidates({
+                  status: status === 'observe' || status === 'hold' || status === 'reject'
+                    ? status
+                    : undefined,
+                  limit: Number(url.searchParams.get('limit')) || 200,
+                }),
+              })
+              return
+            }
+            if (req.method === 'POST') {
+              sendJson(res, 200, upsertWatchCandidate(JSON.parse((await readBody(req)) || '{}')))
+              return
+            }
+            if (req.method === 'DELETE') {
+              sendJson(res, 200, {
+                removed: removeWatchCandidate(url.searchParams.get('code') ?? ''),
+              })
+              return
+            }
+            sendJson(res, 405, { error: 'method not allowed' })
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/sustainability') {
+          const code = (url.searchParams.get('code') ?? '').toLowerCase()
+          if (!/^(sh|sz|bj)\d{6}$/.test(code)) {
+            sendJson(res, 400, { error: '无效的股票代码' })
+            return
+          }
+          try {
+            const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+            const stocks = snap ? service.stocksWithIndustry() : []
+            const name = stocks.find((s) => s.code === code)?.name
+            const report = await buildSustainabilityReport({ code, name, stocks })
+            if (url.searchParams.get('persist') !== '0') {
+              try {
+                attachSustainability(code, {
+                  score: report.score,
+                  grade: report.grade,
+                  technical: report.technical,
+                  event: report.event,
+                  opinion: report.opinion,
+                  industryScore: report.industryScore,
+                  reasons: report.reasons,
+                  risks: report.risks,
+                  vetoes: report.vetoes,
+                  generatedAt: report.generatedAt,
+                })
+              } catch {
+                // 候选不存在时仅返回报告，不强制入队
+              }
+            }
+            sendJson(res, 200, report)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/events') {
+          const kind = url.searchParams.get('kind')
+          sendJson(res, 200, listMarketEvents({
+            days: Number(url.searchParams.get('days')) || 7,
+            kind: kind === 'announcement' || kind === 'regulatory' || kind === 'news' ? kind as MarketEventKind : undefined,
+            industry: url.searchParams.get('industry') || undefined,
+            code: url.searchParams.get('code') || undefined,
+            related: url.searchParams.get('related') === '1' || url.searchParams.get('related') === 'true',
+            q: url.searchParams.get('q') || undefined,
+            limit: Number(url.searchParams.get('limit')) || 80,
+          }))
+          return
+        }
+
+        if (path.startsWith('/api/events/')) {
+          const id = decodeURIComponent(path.slice('/api/events/'.length))
+          const event = getMarketEvent(id)
+          if (!event) {
+            sendJson(res, 404, { error: '资讯事件不存在' })
+            return
+          }
+          sendJson(res, 200, { event })
+          return
+        }
+
         if (path === '/api/opinions/feed') {
           const platform = url.searchParams.get('platform')
           const subscriptionId = url.searchParams.get('subscriptionId') || undefined
@@ -713,6 +1163,25 @@ export function marketDataPlugin(): Plugin {
               maxAgeDays: Number(url.searchParams.get('maxAgeDays')) || 180,
             }),
           })
+          return
+        }
+
+        if (path === '/api/opinions/stock-reco') {
+          try {
+            const platform = url.searchParams.get('platform')
+            const stance = url.searchParams.get('stance')
+            const result = buildOpinionStockReco({
+              days: Number(url.searchParams.get('days')) || 60,
+              limit: Number(url.searchParams.get('limit')) || 40,
+              platform: platform === 'zhihu' || platform === 'xueqiu' ? platform : undefined,
+              stance: stance === 'bullish' || stance === 'bearish' || stance === 'all' ? stance : 'all',
+              stocks: service.stocksWithIndustry(),
+              watchlist: listWatchCandidates({ limit: 100 }).map((c) => c.code),
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
+          }
           return
         }
 
@@ -873,5 +1342,7 @@ function normalizeConditions(b: Partial<StrategyConditions>): StrategyConditions
     strategies: Array.isArray(b.strategies)
       ? (b.strategies as string[]).filter((x) => SCREENING_STRATEGIES.some((d) => d.key === x))
       : undefined,
+    requireRecentEvent: b.requireRecentEvent === true,
+    eventLookbackDays: num(b.eventLookbackDays),
   }
 }

@@ -7,7 +7,20 @@ import type {
   FusionResult,
   KLineBar,
   LatestKlineSyncResult,
+  MarketEventCollectResult,
+  MarketEventDetail,
+  MarketEventKind,
+  MarketEventListResponse,
+  EventStockRecoResponse,
   OpinionDocument,
+  OpinionStockRecoResponse,
+  FundFlowResult,
+  FundFlowRankStatus,
+  FundStockRecoResponse,
+  DragonTigerBoardType,
+  DragonTigerCacheEntry,
+  DragonTigerRankStatus,
+  DragonTigerRecoResponse,
   OpinionBacktestConfig,
   OpinionBacktestResult,
   OpinionPlatform,
@@ -17,6 +30,7 @@ import type {
   PortfolioBacktestConfig,
   PortfolioBacktestResult,
   PrefetchProgress,
+  StrategyProgress,
   Quote,
   ResearchDossier,
   ResearchRecord,
@@ -29,8 +43,14 @@ import type {
   StrategyOptimizationConfig,
   StrategyOptimizationResult,
   StrategyResult,
+  SustainabilityReport,
   TunnelInfo,
   UpdateStatus,
+  WatchCandidate,
+  CandidateReviewStats,
+  CandidateStatus,
+  CandidateSource,
+  CandidateContext,
 } from '../types'
 import { searchLocal, stockNameOf } from '../data/stocks'
 import { generateDailyBars, generateMinuteBars, generateQuote } from '../data/mock'
@@ -80,13 +100,121 @@ export async function fetchDataCoverage(codes: string[], period = 'day'): Promis
   return await res.json()
 }
 
-export async function fetchFundFlow(code: string, days = 20): Promise<import('../types').FundFlowResult> {
+export async function fetchFundFlow(code: string, days = 20): Promise<FundFlowResult> {
   const res = await fetch(`/api/data/fund-flow?code=${encodeURIComponent(code)}&days=${days}`)
   if (!res.ok) {
     const error = (await res.json().catch(() => null)) as { error?: string } | null
     throw new Error(error?.error ?? `fund-flow http ${res.status}`)
   }
-  return await res.json()
+  return (await res.json()) as FundFlowResult
+}
+
+export async function fetchFundStockReco(opts: {
+  days?: number
+  limit?: number
+  minMainNet?: number
+  minConsecutive?: number
+  excludeDown?: number
+} = {}): Promise<FundStockRecoResponse> {
+  const params = new URLSearchParams()
+  if (opts.days) params.set('days', String(opts.days))
+  if (opts.limit) params.set('limit', String(opts.limit))
+  if (opts.minMainNet != null) params.set('minMainNet', String(opts.minMainNet))
+  if (opts.minConsecutive != null) params.set('minConsecutive', String(opts.minConsecutive))
+  if (opts.excludeDown != null) params.set('excludeDown', String(opts.excludeDown))
+  const res = await fetch(`/api/fund/stock-reco?${params}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `fund stock reco http ${res.status}`)
+  }
+  return (await res.json()) as FundStockRecoResponse
+}
+
+export async function fetchFundRankStatus(): Promise<FundFlowRankStatus> {
+  const res = await fetch('/api/fund/status')
+  if (!res.ok) throw new Error(`fund status http ${res.status}`)
+  return (await res.json()) as FundFlowRankStatus
+}
+
+export async function refreshFundRank(opts: {
+  watchlist?: string[]
+  topAmount?: number
+} = {}): Promise<{ refreshed: number; failed: number; poolSize: number; updatedAt: number }> {
+  const res = await fetch('/api/fund/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `fund refresh http ${res.status}`)
+  }
+  return (await res.json()) as { refreshed: number; failed: number; poolSize: number; updatedAt: number }
+}
+
+export async function fetchDragonTigerStockReco(opts: {
+  boardType?: DragonTigerBoardType
+  prefer?: 'net' | 'org' | 'hot'
+  limit?: number
+  minNet?: number
+  excludeDown?: number
+} = {}): Promise<DragonTigerRecoResponse> {
+  const params = new URLSearchParams()
+  if (opts.boardType) params.set('boardType', opts.boardType)
+  if (opts.prefer) params.set('prefer', opts.prefer)
+  if (opts.limit) params.set('limit', String(opts.limit))
+  if (opts.minNet != null) params.set('minNet', String(opts.minNet))
+  if (opts.excludeDown != null) params.set('excludeDown', String(opts.excludeDown))
+  const res = await fetch(`/api/dragon/stock-reco?${params}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `dragon stock reco http ${res.status}`)
+  }
+  return (await res.json()) as DragonTigerRecoResponse
+}
+
+export async function fetchDragonTigerStatus(): Promise<DragonTigerRankStatus> {
+  const res = await fetch('/api/dragon/status')
+  if (!res.ok) throw new Error(`dragon status http ${res.status}`)
+  return (await res.json()) as DragonTigerRankStatus
+}
+
+export async function refreshDragonTigerRank(opts: {
+  date?: string
+  boardType?: DragonTigerBoardType
+} = {}): Promise<{
+  refreshed: number
+  tradeDate: string
+  boardType: DragonTigerBoardType
+  poolSize: number
+  updatedAt: number
+}> {
+  const res = await fetch('/api/dragon/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `dragon refresh http ${res.status}`)
+  }
+  return (await res.json()) as {
+    refreshed: number
+    tradeDate: string
+    boardType: DragonTigerBoardType
+    poolSize: number
+    updatedAt: number
+  }
+}
+
+export async function fetchDragonTigerItem(code: string): Promise<DragonTigerCacheEntry | null> {
+  const res = await fetch(`/api/dragon/item?code=${encodeURIComponent(code)}`)
+  if (res.status === 404) return null
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `dragon item http ${res.status}`)
+  }
+  return (await res.json()) as DragonTigerCacheEntry
 }
 
 export async function syncLatestDailyKlines(codes?: string[]): Promise<LatestKlineSyncResult> {
@@ -117,6 +245,14 @@ export async function startPrefetch(period = 'day'): Promise<void> {
 export async function getPrefetchProgress(): Promise<PrefetchProgress> {
   const res = await fetch('/api/prefetch/progress')
   return (await res.json()) as PrefetchProgress
+}
+
+export async function getStrategyProgress(): Promise<StrategyProgress> {
+  const res = await fetch('/api/strategy/progress')
+  if (!res.ok) {
+    return { running: false, phase: 'idle', done: 0, total: 0, hits: 0, message: '' }
+  }
+  return (await res.json()) as StrategyProgress
 }
 
 /** 运行选股策略 */
@@ -355,6 +491,25 @@ export async function fetchOpinionSignals(
   return json.signals ?? []
 }
 
+export async function fetchOpinionStockReco(opts: {
+  days?: number
+  limit?: number
+  platform?: OpinionPlatform
+  stance?: 'bullish' | 'bearish' | 'all'
+} = {}): Promise<OpinionStockRecoResponse> {
+  const params = new URLSearchParams()
+  if (opts.days) params.set('days', String(opts.days))
+  if (opts.limit) params.set('limit', String(opts.limit))
+  if (opts.platform) params.set('platform', opts.platform)
+  if (opts.stance) params.set('stance', opts.stance)
+  const res = await fetch(`/api/opinions/stock-reco?${params}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `opinion stock reco http ${res.status}`)
+  }
+  return (await res.json()) as OpinionStockRecoResponse
+}
+
 export async function fetchOpinionSyncLogs(
   platform?: OpinionPlatform,
   limit = 20,
@@ -475,6 +630,181 @@ export async function getUpdateStatus(): Promise<UpdateStatus> {
 /** 手动触发一次完整更新（快照 + 行业 + 日K预取） */
 export async function runUpdate(): Promise<void> {
   await fetch('/api/update/run')
+}
+
+export async function fetchMarketEvents(filters: {
+  days?: number
+  kind?: MarketEventKind | ''
+  industry?: string
+  code?: string
+  related?: boolean
+  q?: string
+  limit?: number
+} = {}): Promise<MarketEventListResponse> {
+  const params = new URLSearchParams()
+  if (filters.days) params.set('days', String(filters.days))
+  if (filters.kind) params.set('kind', filters.kind)
+  if (filters.industry) params.set('industry', filters.industry)
+  if (filters.code) params.set('code', filters.code)
+  if (filters.related) params.set('related', '1')
+  if (filters.q) params.set('q', filters.q)
+  if (filters.limit) params.set('limit', String(filters.limit))
+  const res = await fetch(`/api/events?${params}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `events http ${res.status}`)
+  }
+  return (await res.json()) as MarketEventListResponse
+}
+
+export async function fetchMarketEvent(id: string): Promise<MarketEventDetail> {
+  const res = await fetch(`/api/events/${encodeURIComponent(id)}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `event http ${res.status}`)
+  }
+  const json = (await res.json()) as { event: MarketEventDetail }
+  return json.event
+}
+
+export async function collectMarketEvents(watchlist: string[] = []): Promise<MarketEventCollectResult> {
+  const res = await fetch('/api/events/collect', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ watchlist }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `events collect http ${res.status}`)
+  }
+  return (await res.json()) as MarketEventCollectResult
+}
+
+export async function fetchEventStockReco(opts: {
+  days?: number
+  limit?: number
+  watchlist?: string[]
+  kind?: MarketEventKind | ''
+  industry?: string
+} = {}): Promise<EventStockRecoResponse> {
+  const params = new URLSearchParams()
+  if (opts.days) params.set('days', String(opts.days))
+  if (opts.limit) params.set('limit', String(opts.limit))
+  if (opts.watchlist?.length) params.set('watchlist', opts.watchlist.join(','))
+  if (opts.kind) params.set('kind', opts.kind)
+  if (opts.industry) params.set('industry', opts.industry)
+  const res = await fetch(`/api/events/stock-reco?${params}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `event stock reco http ${res.status}`)
+  }
+  return (await res.json()) as EventStockRecoResponse
+}
+
+export async function fetchJin10Status(): Promise<{ configured: boolean }> {
+  const res = await fetch('/api/jin10/status')
+  if (!res.ok) throw new Error(`jin10 status http ${res.status}`)
+  return (await res.json()) as { configured: boolean }
+}
+
+export async function fetchJin10Flash(opts: { q?: string; cursor?: string } = {}): Promise<{
+  items: Array<{ title?: string; content: string; time: string; url: string }>
+  hasMore?: boolean
+  cursor?: string
+  provider: string
+}> {
+  const params = new URLSearchParams()
+  if (opts.q) params.set('q', opts.q)
+  if (opts.cursor) params.set('cursor', opts.cursor)
+  const res = await fetch(`/api/jin10/flash?${params}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `jin10 flash http ${res.status}`)
+  }
+  return (await res.json()) as {
+    items: Array<{ title?: string; content: string; time: string; url: string }>
+    hasMore?: boolean
+    cursor?: string
+    provider: string
+  }
+}
+
+export async function fetchJin10Calendar(): Promise<{
+  items: Array<Record<string, unknown>>
+  provider: string
+}> {
+  const res = await fetch('/api/jin10/calendar')
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `jin10 calendar http ${res.status}`)
+  }
+  return (await res.json()) as { items: Array<Record<string, unknown>>; provider: string }
+}
+
+export async function fetchWatchCandidates(status?: CandidateStatus): Promise<WatchCandidate[]> {
+  const params = new URLSearchParams()
+  if (status) params.set('status', status)
+  const res = await fetch(`/api/candidates?${params}`)
+  if (!res.ok) throw new Error(`candidates http ${res.status}`)
+  const json = (await res.json()) as { candidates: WatchCandidate[] }
+  return json.candidates ?? []
+}
+
+export async function upsertWatchCandidate(body: {
+  code: string
+  name?: string
+  industry?: string
+  status?: CandidateStatus
+  source?: CandidateSource
+  sources?: CandidateSource[]
+  context?: CandidateContext
+}): Promise<WatchCandidate> {
+  const res = await fetch('/api/candidates', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `candidates upsert http ${res.status}`)
+  }
+  return (await res.json()) as WatchCandidate
+}
+
+export async function setWatchCandidateStatus(code: string, status: CandidateStatus): Promise<WatchCandidate> {
+  const res = await fetch('/api/candidates/status', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code, status }),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `candidates status http ${res.status}`)
+  }
+  return (await res.json()) as WatchCandidate
+}
+
+export async function removeWatchCandidate(code: string): Promise<void> {
+  const res = await fetch(`/api/candidates?code=${encodeURIComponent(code)}`, { method: 'DELETE' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `candidates delete http ${res.status}`)
+  }
+}
+
+export async function fetchCandidateReviewStats(): Promise<CandidateReviewStats> {
+  const res = await fetch('/api/candidates/review-stats')
+  if (!res.ok) throw new Error(`candidates review http ${res.status}`)
+  return (await res.json()) as CandidateReviewStats
+}
+
+export async function fetchSustainability(code: string, persist = true): Promise<SustainabilityReport> {
+  const res = await fetch(`/api/sustainability?code=${encodeURIComponent(code)}&persist=${persist ? '1' : '0'}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `sustainability http ${res.status}`)
+  }
+  return (await res.json()) as SustainabilityReport
 }
 
 /** 拉取多只股票实时报价（服务端已合并 TickFlow/腾讯为统一 JSON） */

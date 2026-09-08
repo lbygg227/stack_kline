@@ -158,6 +158,15 @@ export interface PrefetchProgress {
   failed: number
 }
 
+export interface StrategyProgress {
+  running: boolean
+  phase: 'idle' | 'preparing' | 'ai' | 'screening' | 'done'
+  done: number
+  total: number
+  hits: number
+  message: string
+}
+
 export interface StrategyConditions {
   minChangePct?: number
   maxChangePct?: number
@@ -178,6 +187,9 @@ export interface StrategyConditions {
   watchlist: string[]
   /** 常见策略（多选，取交集） */
   strategies?: string[]
+  /** 近 N 日须有一级资讯事件（代码或行业命中） */
+  requireRecentEvent?: boolean
+  eventLookbackDays?: number
   indicator: string
 }
 
@@ -577,7 +589,7 @@ export interface ResearchDossier {
   records: ResearchRecord[]
   timeline: Array<{
     id: string
-    type: 'research' | 'opinion'
+    type: 'research' | 'opinion' | 'event'
     timestamp: number
     title: string
     summary: string
@@ -586,6 +598,7 @@ export interface ResearchDossier {
     version?: number
     author?: string
     sourceUrl?: string
+    eventKind?: MarketEventKind
   }>
 }
 
@@ -751,4 +764,297 @@ export interface FundFlowResult {
   code: string
   name: string
   days: FundFlowDay[]
+  fromCache?: boolean
+  updatedAt?: number
+}
+
+export type MarketEventKind = 'announcement' | 'regulatory' | 'news'
+
+export interface MarketEvent {
+  id: string
+  title: string
+  url: string
+  snippet: string
+  source?: string
+  provider: string
+  query: string
+  publishedAt: number
+  capturedAt: number
+  kind: MarketEventKind
+  strength: number
+  codes: string[]
+  names: string[]
+  industries: string[]
+  opinionCount?: number
+}
+
+export interface EventOpinionLink {
+  documentId: string
+  authorName: string
+  platform: string
+  title: string
+  publishedAt: number
+  url: string
+  stance: 'bullish' | 'bearish' | 'neutral'
+  confidence: number
+  thesis: string
+  code?: string
+  name?: string
+  industry?: string
+}
+
+export interface MarketEventDetail extends MarketEvent {
+  opinions: EventOpinionLink[]
+}
+
+export interface MarketEventListResponse {
+  events: MarketEvent[]
+  lastCollectAt?: number
+  lastProvider?: string
+  total: number
+}
+
+export interface MarketEventCollectResult {
+  created: number
+  total: number
+  queries: number
+  provider: string
+  message?: string
+}
+
+export type EventRecoSource = 'direct' | 'proxy'
+
+export interface EventStockRecoItem {
+  code: string
+  name: string
+  industry?: string
+  score: number
+  source: EventRecoSource
+  eventCount: number
+  relatedEventIds: string[]
+  headlines: string[]
+  reason: string
+  price?: number
+  changePct?: number
+}
+
+export interface EventStockRecoResponse {
+  items: EventStockRecoItem[]
+  days: number
+  total: number
+}
+
+export interface Jin10FlashItem {
+  title?: string
+  content: string
+  time: string
+  url: string
+}
+
+export interface Jin10CalendarItem {
+  name?: string
+  country?: string
+  time?: string
+  actual?: string
+  forecast?: string
+  previous?: string
+  importance?: number | string
+  [key: string]: unknown
+}
+
+export type CandidateStatus = 'observe' | 'hold' | 'reject'
+export type CandidateSource = 'strategy' | 'fusion' | 'event' | 'opinion' | 'industry' | 'fund' | 'dragon' | 'manual'
+
+export interface CandidateContext {
+  reason?: string
+  strategies?: string[]
+  fusionScore?: number
+  recommendation?: 'recommend' | 'observe' | 'avoid'
+  authors?: string[]
+  eventId?: string
+  eventTitle?: string
+  conditionsSummary?: string
+  industry?: string
+  note?: string
+}
+
+export interface SustainabilitySnapshot {
+  score: number
+  grade: 'track' | 'cautious' | 'reject'
+  technical: number
+  event: number
+  opinion: number
+  industryScore: number
+  reasons: string[]
+  risks: string[]
+  vetoes: string[]
+  generatedAt: number
+}
+
+export interface WatchCandidate {
+  code: string
+  name: string
+  industry?: string
+  status: CandidateStatus
+  sources: CandidateSource[]
+  context: CandidateContext
+  sustainability?: SustainabilitySnapshot
+  createdAt: number
+  updatedAt: number
+}
+
+export interface SustainabilityReport extends SustainabilitySnapshot {
+  code: string
+  name: string
+  industry?: string
+  analysis?: {
+    score: number
+    signalKey: string
+    signalLabel: string
+    summary: string
+    reasons: string[]
+    risks: string[]
+  }
+  opinionSignal?: {
+    score: number
+    stance: 'bullish' | 'bearish' | 'neutral'
+    confidence: number
+    agreement: number
+    authors: string[]
+    claimCount: number
+  } | null
+  events: Array<{
+    id: string
+    title: string
+    kind: MarketEventKind
+    strength: number
+    publishedAt: number
+  }>
+  industryChangePct?: number
+}
+
+export interface CandidateReviewStats {
+  total: number
+  byStatus: Record<CandidateStatus, number>
+  bySource: Record<string, number>
+  withSustainability: number
+  avgScore: number | null
+}
+
+export interface ScreenerSeed {
+  industry?: string
+  requireRecentEvent?: boolean
+  eventLookbackDays?: number
+  /** 打开选股页时切到观点驱动通道 */
+  opinionDriven?: boolean
+  opinionLookbackDays?: number
+  note?: string
+}
+
+export interface OpinionStockRecoItem {
+  code: string
+  name: string
+  industry?: string
+  score: number
+  stance: 'bullish' | 'bearish' | 'neutral'
+  confidence: number
+  agreement: number
+  authors: string[]
+  claimCount: number
+  latestAt: number
+  theses: string[]
+  risks: string[]
+  reason: string
+}
+
+export interface OpinionStockRecoResponse {
+  items: OpinionStockRecoItem[]
+  days: number
+  total: number
+}
+
+export interface FundStockRecoItem {
+  code: string
+  name: string
+  industry?: string
+  score: number
+  mainNetSum: number
+  mainNetToday: number
+  consecutiveInflowDays: number
+  positiveDays: number
+  lookbackDays: number
+  reason: string
+  price?: number
+  changePct?: number
+}
+
+export interface FundStockRecoResponse {
+  items: FundStockRecoItem[]
+  days: number
+  total: number
+  lastRefreshAt?: number
+  poolSize: number
+}
+
+export interface FundFlowRankStatus {
+  poolSize: number
+  lastRefreshAt?: number
+  lastError?: string
+  updatedAt: number
+}
+
+export type DragonTigerBoardType = 'all' | 'org' | 'hot_money'
+
+export interface DragonTigerRecoItem {
+  code: string
+  name: string
+  industry?: string
+  score: number
+  tradeDate: string
+  boardType: DragonTigerBoardType
+  netValue: number
+  orgNetValue: number | null
+  hotMoneyNetValue: number | null
+  changePct: number | null
+  limitReason?: string
+  concepts: string[]
+  reason: string
+}
+
+export interface DragonTigerRecoResponse {
+  items: DragonTigerRecoItem[]
+  total: number
+  tradeDate?: string
+  boardType?: DragonTigerBoardType
+  lastRefreshAt?: number
+  poolSize: number
+  configured: boolean
+}
+
+export interface DragonTigerRankStatus {
+  configured: boolean
+  poolSize: number
+  tradeDate?: string
+  boardType?: DragonTigerBoardType
+  lastRefreshAt?: number
+  lastError?: string
+  updatedAt: number
+}
+
+export interface DragonTigerCacheEntry {
+  code: string
+  name: string
+  industry?: string
+  tradeDate: string
+  boardType: DragonTigerBoardType
+  netValue: number
+  buyValue: number
+  sellValue: number
+  orgNetValue: number | null
+  hotMoneyNetValue: number | null
+  change: number | null
+  hotRank: number | null
+  limitReason?: string
+  concepts: string[]
+  updatedAt: number
 }
