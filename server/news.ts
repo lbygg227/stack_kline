@@ -40,12 +40,12 @@ const fmtDateTime = (d: Date): string => {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-async function searchAnspire(query: string, key: string): Promise<NewsItem[]> {
+async function searchAnspire(query: string, key: string, topK = 6): Promise<NewsItem[]> {
   const url = new URL('https://plugin.anspire.cn/api/ntsearch/search')
   const now = new Date()
   const from = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)
   url.searchParams.set('query', query)
-  url.searchParams.set('top_k', '6')
+  url.searchParams.set('top_k', String(topK))
   url.searchParams.set('FromTime', fmtDateTime(from))
   url.searchParams.set('ToTime', fmtDateTime(now))
   url.searchParams.set('region_mode', '2')
@@ -59,7 +59,7 @@ async function searchAnspire(query: string, key: string): Promise<NewsItem[]> {
   const json = (await res.json()) as {
     results?: Array<{ title?: string; url?: string; content?: string; date?: string }>
   }
-  return (json.results ?? []).slice(0, 6).map((r) => ({
+  return (json.results ?? []).slice(0, topK).map((r) => ({
     title: r.title ?? '',
     url: r.url ?? '',
     snippet: (r.content ?? '').slice(0, 220),
@@ -67,7 +67,7 @@ async function searchAnspire(query: string, key: string): Promise<NewsItem[]> {
   })).filter((r) => r.title && r.url)
 }
 
-async function searchTavily(query: string, key: string): Promise<NewsItem[]> {
+async function searchTavily(query: string, key: string, topK = 6): Promise<NewsItem[]> {
   const res = await fetch('https://api.tavily.com/search', {
     method: 'POST',
     headers: {
@@ -78,7 +78,7 @@ async function searchTavily(query: string, key: string): Promise<NewsItem[]> {
       api_key: key,
       query,
       topic: 'news',
-      max_results: 6,
+      max_results: topK,
       days: 7,
       include_raw_content: false,
     }),
@@ -87,7 +87,7 @@ async function searchTavily(query: string, key: string): Promise<NewsItem[]> {
   const json = (await res.json()) as {
     results?: Array<{ title?: string; url?: string; content?: string; published_date?: string }>
   }
-  return (json.results ?? []).slice(0, 6).map((r) => ({
+  return (json.results ?? []).slice(0, topK).map((r) => ({
     title: r.title ?? '',
     url: r.url ?? '',
     snippet: (r.content ?? '').slice(0, 220),
@@ -95,10 +95,10 @@ async function searchTavily(query: string, key: string): Promise<NewsItem[]> {
   })).filter((r) => r.title && r.url)
 }
 
-async function searchBrave(query: string, key: string): Promise<NewsItem[]> {
+async function searchBrave(query: string, key: string, topK = 6): Promise<NewsItem[]> {
   const url = new URL('https://api.search.brave.com/res/v1/web/search')
   url.searchParams.set('q', query)
-  url.searchParams.set('count', '6')
+  url.searchParams.set('count', String(topK))
   url.searchParams.set('search_lang', 'zh')
   url.searchParams.set('freshness', 'pm')
   const res = await fetch(url, {
@@ -111,7 +111,7 @@ async function searchBrave(query: string, key: string): Promise<NewsItem[]> {
   const json = (await res.json()) as {
     web?: { results?: Array<{ title?: string; url?: string; description?: string; page_age?: string }> }
   }
-  return (json.web?.results ?? []).slice(0, 6).map((r) => ({
+  return (json.web?.results ?? []).slice(0, topK).map((r) => ({
     title: r.title ?? '',
     url: r.url ?? '',
     snippet: (r.description ?? '').slice(0, 220),
@@ -119,12 +119,12 @@ async function searchBrave(query: string, key: string): Promise<NewsItem[]> {
   })).filter((r) => r.title && r.url)
 }
 
-async function searchSerpapi(query: string, key: string): Promise<NewsItem[]> {
+async function searchSerpapi(query: string, key: string, topK = 6): Promise<NewsItem[]> {
   const url = new URL('https://serpapi.com/search.json')
   url.searchParams.set('engine', 'google_news')
   url.searchParams.set('q', query)
   url.searchParams.set('api_key', key)
-  url.searchParams.set('num', '6')
+  url.searchParams.set('num', String(topK))
   url.searchParams.set('hl', 'zh-cn')
   url.searchParams.set('gl', 'cn')
   const res = await fetch(url)
@@ -132,7 +132,7 @@ async function searchSerpapi(query: string, key: string): Promise<NewsItem[]> {
   const json = (await res.json()) as {
     news_results?: Array<{ title?: string; link?: string; snippet?: string; date?: string; source?: { name?: string } }>
   }
-  return (json.news_results ?? []).slice(0, 6).map((r) => ({
+  return (json.news_results ?? []).slice(0, topK).map((r) => ({
     title: r.title ?? '',
     url: r.link ?? '',
     snippet: (r.snippet ?? '').slice(0, 220),
@@ -141,22 +141,40 @@ async function searchSerpapi(query: string, key: string): Promise<NewsItem[]> {
   })).filter((r) => r.title && r.url)
 }
 
-export async function searchStockNews(name: string, code: string): Promise<NewsSearchResult> {
-  const query = queryFor(name, code)
-  const providers: Array<{ name: string; key: string; run: (q: string, k: string) => Promise<NewsItem[]> }> = [
+type NewsProvider = {
+  name: string
+  key: string
+  run: (q: string, k: string, topK: number) => Promise<NewsItem[]>
+}
+
+function newsProviders(): NewsProvider[] {
+  return [
     { name: 'anspire', key: API_KEYS[0] ?? '', run: searchAnspire },
     { name: 'tavily', key: firstKey('TAVILY_API_KEYS'), run: searchTavily },
     { name: 'brave', key: firstKey('BRAVE_API_KEYS'), run: searchBrave },
     { name: 'serpapi', key: firstKey('SERPAPI_API_KEYS'), run: searchSerpapi },
   ]
-  for (const p of providers) {
+}
+
+export function hasNewsProvider(): boolean {
+  return newsProviders().some((p) => !!p.key)
+}
+
+export async function searchNews(query: string, topK = 6): Promise<NewsSearchResult> {
+  const q = query.trim()
+  if (!q) return { provider: 'none', items: [] }
+  for (const p of newsProviders()) {
     if (!p.key) continue
     try {
-      const items = await p.run(query, p.key)
+      const items = await p.run(q, p.key, topK)
       if (items.length > 0) return { provider: p.name, items }
     } catch (e) {
       console.warn(`[news] ${p.name} 搜索失败: `, e)
     }
   }
   return { provider: 'none', items: [] }
+}
+
+export async function searchStockNews(name: string, code: string): Promise<NewsSearchResult> {
+  return searchNews(queryFor(name, code), 6)
 }

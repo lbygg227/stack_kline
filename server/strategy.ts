@@ -8,6 +8,7 @@
 import type { KLineBar } from './tencent.ts'
 import type { SnapshotStock } from './eastmoney.ts'
 import { SCREENING_STRATEGIES, buildIndustryStats, evaluateStrategies } from './screening-strategies.ts'
+import { getRecentEventUniverse, stockHitsEventUniverse } from './market-events.ts'
 
 export interface StrategyConditions {
   minChangePct?: number
@@ -29,6 +30,9 @@ export interface StrategyConditions {
   watchlist: string[]
   /** 常见策略（多选，取交集） */
   strategies?: string[]
+  /** 近 N 日须有一级资讯事件（代码或行业命中） */
+  requireRecentEvent?: boolean
+  eventLookbackDays?: number
   indicator:
     | 'none'
     | 'ma5_10_cross_up'
@@ -260,7 +264,7 @@ export async function runStrategy(
   snapshot: SnapshotStock[],
   conds: StrategyConditions,
   getKline: (code: string) => Promise<KLineBar[]>,
-  onProgress?: (done: number, total: number) => void,
+  onProgress?: (done: number, total: number, hits?: number) => void,
 ): Promise<StrategyResult[]> {
   // 1) 标的池
   let pool = snapshot
@@ -270,6 +274,12 @@ export async function runStrategy(
   }
   // 2) 快照条件
   let cands = pool.filter((s) => matchSnapshot(s, conds))
+
+  // 2.5) 一级资讯事件：近 N 日事件覆盖的代码或行业
+  if (conds.requireRecentEvent) {
+    const universe = getRecentEventUniverse(conds.eventLookbackDays ?? 7)
+    cands = cands.filter((s) => stockHitsEventUniverse(s, universe))
+  }
 
   // 3) 常见策略 + 技术指标过滤（可组合，取交集）
   const selectedStrategies = conds.strategies?.length
@@ -284,8 +294,10 @@ export async function runStrategy(
       : new Map()
     const results: StrategyResult[] = []
     let done = 0
+    let hits = 0
     const concurrency = 8
     const queue = [...cands]
+    onProgress?.(0, cands.length, 0)
     const worker = async () => {
       while (queue.length > 0) {
         const s = queue.shift()
@@ -295,7 +307,7 @@ export async function runStrategy(
           const ev = needIndicator ? evalIndicator(bars ?? [], conds.indicator) : null
           if (needIndicator && !ev) {
             done++
-            onProgress?.(done, cands.length)
+            onProgress?.(done, cands.length, hits)
             continue
           }
           const hitStrategies = selectedStrategies.length
@@ -304,7 +316,7 @@ export async function runStrategy(
           const strategyPassed = selectedStrategies.length === 0 || hitStrategies.length === selectedStrategies.length
           if (!strategyPassed) {
             done++
-            onProgress?.(done, cands.length)
+            onProgress?.(done, cands.length, hits)
             continue
           }
           const strategyName = new Map(SCREENING_STRATEGIES.map((d) => [d.key, d.name]))
@@ -320,11 +332,12 @@ export async function runStrategy(
             extra: ev?.extra ?? {},
             strategies: hitStrategies.length ? hitStrategies : undefined,
           })
+          hits++
         } catch {
           /* 单只失败跳过 */
         }
         done++
-        onProgress?.(done, cands.length)
+        onProgress?.(done, cands.length, hits)
       }
     }
     await Promise.all(Array.from({ length: Math.min(concurrency, cands.length) }, worker))
@@ -333,6 +346,7 @@ export async function runStrategy(
   }
 
   // 无技术指标：直接按涨跌幅排序
+  onProgress?.(0, cands.length, 0)
   const plain = cands.map((s) => ({
     code: s.code,
     name: s.name,
@@ -342,5 +356,6 @@ export async function runStrategy(
     extra: { turnover: s.turnover, pe: s.pe },
   }))
   plain.sort((a, b) => b.changePct - a.changePct)
+  onProgress?.(cands.length, cands.length, plain.length)
   return plain.slice(0, 300)
 }

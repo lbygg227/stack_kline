@@ -52,6 +52,8 @@ ${STRATEGY_PROMPT}
   "indicator": "macd_golden" 或 "none",
   "strategies": [] 或 null,
   "pool": "all" 或 "watchlist",
+  "requireRecentEvent": true 或 null,
+  "eventLookbackDays": 7 或 null,
   "explanation": "一句话说明解析出的选股条件"
 }
 
@@ -61,7 +63,8 @@ ${STRATEGY_PROMPT}
 3. 用户说"金叉"默认 MACD 金叉；"站上20日线"→above_ma20；"突破"且提布林→boll_break_up。
 4. 用户明确说"自选股里"才用 pool=watchlist，否则 all。
 5. 只有用户明确提到某个策略名称时，才把对应 key 放入 strategies 数组；例如"双低策略"→["dual_low"]，"资金热度"→["capital_heat"]，"缠论/底背驰"→["chan_theory"]；没提就填 null。
-6. 未提及的条件一律 null。只输出 JSON 本身，不要任何解释文字。`
+6. 用户说“有公告/有新闻/有资讯事件/近N日有事件”时，requireRecentEvent=true，eventLookbackDays 取用户说的天数，没说就 7；没提就都填 null。
+7. 未提及的条件一律 null。只输出 JSON 本身，不要任何解释文字。`
 
 interface AiParsed extends Partial<StrategyConditions> {
   explanation?: string
@@ -116,6 +119,8 @@ export async function parseNaturalLanguage(text: string): Promise<{ conds: Strat
         : undefined,
       pool: parsed.pool === 'watchlist' ? 'watchlist' : 'all',
       watchlist: [],
+      requireRecentEvent: parsed.requireRecentEvent === true ? true : undefined,
+      eventLookbackDays: num(parsed.eventLookbackDays),
     },
     explanation: parsed.explanation ?? '',
   }

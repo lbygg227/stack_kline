@@ -10,6 +10,7 @@ import TradePanel from './components/TradePanel.vue'
 import StrategyPanel from './components/StrategyPanel.vue'
 import OpinionPanel from './components/OpinionPanel.vue'
 import DataManagePanel from './components/DataManagePanel.vue'
+import NewsEventPanel from './components/NewsEventPanel.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -20,6 +21,7 @@ const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'market', label: '行情', icon: '📈' },
   { key: 'watchlist', label: '自选', icon: '⭐' },
   { key: 'all', label: '市场', icon: '📊' },
+  { key: 'events', label: '资讯', icon: '📰' },
   { key: 'strategy', label: '选股', icon: '🔍' },
   { key: 'opinion', label: '观点', icon: '📝' },
   { key: 'trade', label: '交易', icon: '💰' },
@@ -62,6 +64,7 @@ onBeforeUnmount(() => {
         </div>
         <StockList v-else-if="mobileTab === 'watchlist'" />
         <AllMarketPanel v-else-if="mobileTab === 'all'" />
+        <NewsEventPanel v-else-if="mobileTab === 'events'" />
         <StrategyPanel v-else-if="mobileTab === 'strategy'" />
         <OpinionPanel v-else-if="mobileTab === 'opinion'" />
         <TradePanel v-else-if="mobileTab === 'trade'" />
@@ -72,6 +75,7 @@ onBeforeUnmount(() => {
     <!-- 桌面端：顶部 Tab 页面切换 -->
     <template v-else>
       <StrategyPanel v-if="state.view === 'strategy'" class="page-view" />
+      <NewsEventPanel v-else-if="state.view === 'events'" class="page-view" />
       <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
       <AllMarketPanel v-else-if="state.view === 'all-market'" class="page-view" />
       <DataManagePanel v-else-if="state.view === 'data'" class="page-view" />
