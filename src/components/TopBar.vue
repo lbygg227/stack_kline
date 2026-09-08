@@ -104,6 +104,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
 
     <button
       class="btn nav-btn"
+      :class="{ active: state.view === 'recommend' }"
+      @click="setView(state.view === 'recommend' ? 'market' : 'recommend')"
+    >
+      今日推荐
+    </button>
+
+    <button
+      class="btn nav-btn"
       :class="{ active: state.view === 'all-market' }"
       @click="setView(state.view === 'all-market' ? 'market' : 'all-market')"
     >

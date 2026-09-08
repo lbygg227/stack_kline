@@ -91,6 +91,7 @@ import {
 import { OpinionSyncScheduler, syncOpinionSubscription } from './opinion-sync.ts'
 import { buildOpinionSignals } from './opinion-signals.ts'
 import { runOpinionBacktest } from './opinion-backtest.ts'
+import { buildTodayRecommendations } from './recommendations.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -191,6 +192,22 @@ export function marketDataPlugin(): Plugin {
           return
         }
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        // ---- 今日推荐（统一候选模型） ----
+        if (path === '/api/recommendations') {
+          const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+          if (!snap) {
+            sendJson(res, 409, { error: '快照尚未就绪，请稍候重试' })
+            return
+          }
+          try {
+            const result = buildTodayRecommendations(service.stocksWithIndustry())
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
 
         if (path === '/api/health') {
           sendJson(res, 200, {

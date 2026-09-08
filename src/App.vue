@@ -11,6 +11,7 @@ import StrategyPanel from './components/StrategyPanel.vue'
 import OpinionPanel from './components/OpinionPanel.vue'
 import DataManagePanel from './components/DataManagePanel.vue'
 import NewsEventPanel from './components/NewsEventPanel.vue'
+import TodayRecommendations from './components/TodayRecommendations.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -18,6 +19,7 @@ const { state, isMobile, mobileTab, refreshQuotes, setMobileTab, toggleTradePane
 let timer: number | undefined
 
 const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
+  { key: 'recommend', label: '推荐', icon: '🎯' },
   { key: 'market', label: '行情', icon: '📈' },
   { key: 'watchlist', label: '自选', icon: '⭐' },
   { key: 'all', label: '市场', icon: '📊' },
@@ -58,7 +60,10 @@ onBeforeUnmount(() => {
     <!-- 移动端：底部导航单页切换 -->
     <template v-if="isMobile">
       <div class="mobile-main">
-        <div v-if="mobileTab === 'market'" class="mobile-market">
+        <div v-if="mobileTab === 'recommend'" class="mobile-page">
+          <TodayRecommendations />
+        </div>
+        <div v-else-if="mobileTab === 'market'" class="mobile-market">
           <QuoteHeader />
           <KLineChart :code="state.currentCode" :name="state.currentName" />
         </div>
@@ -74,7 +79,8 @@ onBeforeUnmount(() => {
 
     <!-- 桌面端：顶部 Tab 页面切换 -->
     <template v-else>
-      <StrategyPanel v-if="state.view === 'strategy'" class="page-view" />
+      <TodayRecommendations v-if="state.view === 'recommend'" class="page-view" />
+      <StrategyPanel v-else-if="state.view === 'strategy'" class="page-view" />
       <NewsEventPanel v-else-if="state.view === 'events'" class="page-view" />
       <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
       <AllMarketPanel v-else-if="state.view === 'all-market'" class="page-view" />

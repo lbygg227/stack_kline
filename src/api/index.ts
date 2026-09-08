@@ -33,6 +33,7 @@ import type {
   PrefetchProgress,
   StrategyProgress,
   Quote,
+  RecommendationListResponse,
   ResearchDossier,
   ResearchRecord,
   ResearchStance,
@@ -756,6 +757,15 @@ export async function fetchJin10Calendar(): Promise<{
     throw new Error(err?.error ?? `jin10 calendar http ${res.status}`)
   }
   return (await res.json()) as { items: Array<Record<string, unknown>>; provider: string }
+}
+
+export async function fetchRecommendations(): Promise<RecommendationListResponse> {
+  const res = await fetch('/api/recommendations')
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `recommendations http ${res.status}`)
+  }
+  return (await res.json()) as RecommendationListResponse
 }
 
 export async function fetchWatchCandidates(status?: CandidateStatus): Promise<WatchCandidate[]> {

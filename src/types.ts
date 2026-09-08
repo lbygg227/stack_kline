@@ -1068,3 +1068,76 @@ export interface DragonTigerCacheEntry {
   concepts: string[]
   updatedAt: number
 }
+
+export type RecommendationStyle = 'trend' | 'limit_up' | 'pullback' | 'leader' | 'event' | 'fund' | 'opinion'
+export type RecommendationChannel = 'technical' | 'event' | 'opinion' | 'fund' | 'dragon'
+
+export interface RecommendationLevels {
+  entry?: number
+  target?: number
+  stopLoss?: number
+}
+
+export interface RecommendationEvidence {
+  technical?: string[]
+  event?: string[]
+  opinion?: string[]
+  fund?: string[]
+  dragon?: string[]
+}
+
+export interface RecommendationRecord {
+  id: string
+  code: string
+  name: string
+  style: RecommendationStyle
+  channels: RecommendationChannel[]
+  thesis: string
+  confidence: number
+  score: number
+  evidence: RecommendationEvidence
+  levels: RecommendationLevels
+  invalidIf: string[]
+  horizonDays: number
+  signalDate: string
+  createdAt: number
+  price?: number
+  changePct?: number
+  industry?: string
+}
+
+export interface RecommendationListResponse {
+  generatedAt: number
+  total: number
+  items: RecommendationRecord[]
+  grouped: Record<RecommendationStyle, RecommendationRecord[]>
+}
+
+export interface BacktestMetricRecord {
+  strategyId: string
+  style: string
+  startDate: string
+  endDate: string
+  metrics: {
+    trades: number
+    winRate: number
+    avgReturn: number
+    maxDrawdown: number
+    profitFactor: number
+    excessReturn: number
+  }
+  passed: boolean
+}
+
+export interface RecommendationOutcome {
+  recommendationId: string
+  signalDate: string
+  entryPrice?: number
+  maxGainPct?: number
+  maxLossPct?: number
+  endPrice?: number
+  returnPct?: number
+  hitTarget: boolean
+  hitStop: boolean
+  invalidated: boolean
+}
