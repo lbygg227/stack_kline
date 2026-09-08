@@ -34,6 +34,7 @@ import type {
   StrategyProgress,
   Quote,
   RecommendationListResponse,
+  StyleBacktestResult,
   ResearchDossier,
   ResearchRecord,
   ResearchStance,
@@ -766,6 +767,19 @@ export async function fetchRecommendations(): Promise<RecommendationListResponse
     throw new Error(err?.error ?? `recommendations http ${res.status}`)
   }
   return (await res.json()) as RecommendationListResponse
+}
+
+export async function runStyleBacktest(payload: Record<string, unknown>): Promise<StyleBacktestResult> {
+  const res = await fetch('/api/backtests/styles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `style backtest http ${res.status}`)
+  }
+  return (await res.json()) as StyleBacktestResult
 }
 
 export async function fetchWatchCandidates(status?: CandidateStatus): Promise<WatchCandidate[]> {

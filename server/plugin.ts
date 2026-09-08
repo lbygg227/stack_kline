@@ -92,6 +92,7 @@ import { OpinionSyncScheduler, syncOpinionSubscription } from './opinion-sync.ts
 import { buildOpinionSignals } from './opinion-signals.ts'
 import { runOpinionBacktest } from './opinion-backtest.ts'
 import { buildTodayRecommendations } from './recommendations.ts'
+import { runStyleBacktest } from './style-backtest.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -192,6 +193,18 @@ export function marketDataPlugin(): Plugin {
           return
         }
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        // ---- 风格回测 ----
+        if (path === '/api/backtests/styles' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}')
+            const result = await runStyleBacktest(body, (code) => getKlineWithCache(code, 'day', 2000))
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
 
         // ---- 今日推荐（统一候选模型） ----
         if (path === '/api/recommendations') {

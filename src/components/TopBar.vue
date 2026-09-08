@@ -134,6 +134,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
       选股器
     </button>
 
+    <button
+      class="btn nav-btn"
+      :class="{ active: state.view === 'backtest' }"
+      @click="setView(state.view === 'backtest' ? 'market' : 'backtest')"
+    >
+      回测研究
+    </button>
+
     <div v-if="!isMobile && candidates.length" class="queue-chip">
       <button class="btn" @click="prevCandidate">‹</button>
       <button class="queue-mid" @click="openWorkbench">

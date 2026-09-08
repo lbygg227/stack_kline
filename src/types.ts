@@ -1141,3 +1141,56 @@ export interface RecommendationOutcome {
   hitStop: boolean
   invalidated: boolean
 }
+
+export type BacktestableStyle = 'trend' | 'limit_up' | 'pullback'
+
+export interface StyleBacktestConfig {
+  style: BacktestableStyle
+  codes: string[]
+  holdingDays: number
+  startDate?: string
+  endDate?: string
+  benchmarkCode: string
+  commissionRate: number
+  stampDutyRate: number
+  slippageBps: number
+}
+
+export interface StyleBacktestTrade {
+  code: string
+  signalDate: string
+  entryDate: string
+  exitDate: string
+  entryPrice: number
+  exitPrice: number
+  returnPct: number
+  benchmarkReturnPct?: number
+  excessReturnPct?: number
+  maxFavorablePct: number
+  maxAdversePct: number
+}
+
+export interface StyleBacktestMetrics {
+  trades: number
+  winRate: number
+  averageReturnPct: number
+  medianReturnPct: number
+  cumulativeReturnPct: number
+  maxDrawdownPct: number
+  averageBenchmarkReturnPct?: number
+  averageExcessReturnPct?: number
+  approximateSharpe?: number
+  averageMaxFavorablePct: number
+  averageMaxAdversePct: number
+}
+
+export interface StyleBacktestResult {
+  mode: 'style_event_study'
+  style: BacktestableStyle
+  config: StyleBacktestConfig
+  metrics: StyleBacktestMetrics
+  trades: StyleBacktestTrade[]
+  equityCurve: Array<{ date: string; value: number }>
+  skippedCodes: Array<{ code: string; reason: string }>
+  warnings: string[]
+}
