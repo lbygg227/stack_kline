@@ -5,25 +5,38 @@ import {
   deleteOpinionSubscription,
   fetchOpinionDocuments,
   fetchOpinionSignals,
+  fetchOpinionStockReco,
   fetchOpinionSubscriptions,
   fetchOpinionSyncLogs,
   ingestOpinionDocument,
   saveOpinionSubscription,
   syncOpinionSubscription,
 } from '../api'
-import type { OpinionDocument, OpinionPlatform, OpinionSignal, OpinionSubscription, OpinionSyncLog } from '../types'
+import type {
+  OpinionDocument,
+  OpinionPlatform,
+  OpinionSignal,
+  OpinionStockRecoItem,
+  OpinionSubscription,
+  OpinionSyncLog,
+} from '../types'
 import { useMarket } from '../composables/useMarket'
+import { useResearch } from '../composables/useResearch'
 import OpinionResearchPanel from './OpinionResearchPanel.vue'
 
-const { setView, setMobileTab, isMobile, selectStock } = useMarket()
+const { setView, setMobileTab, isMobile } = useMarket()
+const { openCandidate, seedScreener } = useResearch()
 const platform = ref<OpinionPlatform>('zhihu')
 const subscriptions = ref<OpinionSubscription[]>([])
 const documents = ref<OpinionDocument[]>([])
 const signals = ref<OpinionSignal[]>([])
+const recoItems = ref<OpinionStockRecoItem[]>([])
 const syncLogs = ref<OpinionSyncLog[]>([])
 const loading = ref(false)
+const recoLoading = ref(false)
 const error = ref('')
 const notice = ref('')
+const opinionDays = ref(60)
 
 const newNickname = ref('')
 const newUserId = ref('')
@@ -53,7 +66,7 @@ async function load() {
     const [subs, docs, signalList, logs] = await Promise.all([
       fetchOpinionSubscriptions(platform.value),
       fetchOpinionDocuments({ platform: platform.value, limit: 100 }),
-      fetchOpinionSignals(platform.value),
+      fetchOpinionSignals(platform.value, opinionDays.value),
       fetchOpinionSyncLogs(platform.value),
     ])
     subscriptions.value = subs
@@ -63,10 +76,28 @@ async function load() {
     if (importSubscriptionId.value && !subs.some((item) => item.id === importSubscriptionId.value)) {
       importSubscriptionId.value = ''
     }
+    await loadReco()
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
     loading.value = false
+  }
+}
+
+async function loadReco() {
+  recoLoading.value = true
+  try {
+    const resp = await fetchOpinionStockReco({
+      platform: platform.value,
+      days: opinionDays.value,
+      limit: 12,
+      stance: 'all',
+    })
+    recoItems.value = resp.items
+  } catch {
+    recoItems.value = []
+  } finally {
+    recoLoading.value = false
   }
 }
 
@@ -181,10 +212,44 @@ async function analyze(document: OpinionDocument) {
   }
 }
 
-function openStock(code?: string, name?: string) {
+async function openStock(code?: string, name?: string, extras?: {
+  authors?: string[]
+  reason?: string
+  industry?: string
+  note?: string
+  recommendation?: 'recommend' | 'observe' | 'avoid'
+}) {
   if (!code) return
-  selectStock(code, name)
-  backToMarket()
+  await openCandidate(code, {
+    name,
+    industry: extras?.industry,
+    source: 'opinion',
+    context: {
+      authors: extras?.authors,
+      reason: extras?.reason,
+      industry: extras?.industry,
+      note: extras?.note,
+      recommendation: extras?.recommendation,
+    },
+  })
+}
+
+async function openRecoItem(item: OpinionStockRecoItem) {
+  await openStock(item.code, item.name, {
+    authors: item.authors,
+    reason: item.reason,
+    industry: item.industry,
+    note: item.theses.slice(0, 2).join(' · '),
+    recommendation: item.stance === 'bullish' ? 'recommend' : item.stance === 'bearish' ? 'avoid' : 'observe',
+  })
+}
+
+function goOpinionDriven() {
+  seedScreener({
+    opinionDriven: true,
+    opinionLookbackDays: opinionDays.value,
+    note: `来自观点研究 · ${platform.value === 'zhihu' ? '知乎' : '雪球'}`,
+  })
 }
 
 const formatTime = (value: number) => new Date(value).toLocaleString('zh-CN', {
@@ -208,7 +273,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
       <button class="btn" @click="backToMarket">← 返回看盘</button>
       <div>
         <div class="op-title">观点研究</div>
-        <div class="op-subtitle">原文留档 · 观点抽取 · 增量监听</div>
+        <div class="op-subtitle">证据层 · 荐股请到选股页「观点驱动」</div>
       </div>
       <div class="op-head-actions">
         <button class="btn" @click="showResearch = true">观点回测</button>
@@ -230,6 +295,39 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 
     <div v-if="error" class="op-message error">{{ error }}</div>
     <div v-if="notice" class="op-message notice">{{ notice }}</div>
+
+    <section class="op-reco">
+      <div class="op-feed-title">
+        <b>由这些观点推出的股票</b>
+        <div class="op-reco-actions">
+          <label>
+            近
+            <select v-model.number="opinionDays" @change="load">
+              <option :value="30">30 日</option>
+              <option :value="60">60 日</option>
+              <option :value="90">90 日</option>
+            </select>
+          </label>
+          <button class="btn" @click="goOpinionDriven">去选股页观点驱动</button>
+        </div>
+      </div>
+      <div v-if="recoLoading && !recoItems.length" class="op-reco-empty">聚合中…</div>
+      <div v-else-if="!recoItems.length" class="op-reco-empty">暂无方向性共识（需已分析且带标的的观点）</div>
+      <div v-else class="op-reco-row">
+        <button
+          v-for="item in recoItems"
+          :key="item.code"
+          class="op-reco-chip"
+          @click="openRecoItem(item)"
+        >
+          <span class="op-reco-name">{{ item.name }}</span>
+          <span :class="`stance-${item.stance}`">{{ stanceLabel(item.stance) }}</span>
+          <span class="op-reco-score" :class="item.score >= 0 ? 'up' : 'down'">
+            {{ item.score > 0 ? '+' : '' }}{{ item.score.toFixed(0) }}
+          </span>
+        </button>
+      </div>
+    </section>
 
     <main class="op-main">
       <aside class="op-side">
@@ -313,15 +411,21 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
       <section class="op-feed">
         <div v-if="signals.length" class="op-card op-signals">
           <div class="op-feed-title">
-            <b>观点共识信号</b>
-            <span>近180日 · 按时效、置信度与一致性加权</span>
+            <b>观点共识明细</b>
+            <span>证据层 · 点股票进观察工作台</span>
           </div>
           <div class="op-signal-list">
             <button
               v-for="signal in signals.slice(0, 12)"
               :key="signal.code"
               class="op-signal"
-              @click="openStock(signal.code, signal.name)"
+              @click="openStock(signal.code, signal.name, {
+                authors: signal.authors,
+                reason: signal.theses[0] || `${stanceLabel(signal.stance)}共识`,
+                industry: signal.industry,
+                note: signal.theses.slice(0, 2).join(' · '),
+                recommendation: signal.stance === 'bullish' ? 'recommend' : signal.stance === 'bearish' ? 'avoid' : 'observe',
+              })"
             >
               <span><b>{{ signal.name }}</b><small>{{ signal.code.toUpperCase() }}</small></span>
               <strong :class="`stance-${signal.stance}`">{{ signal.score > 0 ? '+' : '' }}{{ signal.score.toFixed(0) }}</strong>
@@ -391,6 +495,22 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-message { margin: 10px 14px 0; padding: 8px 10px; border-radius: 5px; font-size: 12px; }
 .op-message.error { background: rgba(239, 35, 42, .08); color: var(--down); }
 .op-message.notice { background: rgba(20, 177, 67, .08); color: var(--up); }
+.op-reco { margin: 10px 14px 0; padding: 10px 12px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel); }
+.op-reco-actions { display: flex; align-items: center; gap: 8px; }
+.op-reco-actions select {
+  height: 26px; margin-left: 4px; border: 1px solid var(--border); border-radius: 4px;
+  background: var(--panel-2); color: var(--text-1);
+}
+.op-reco-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.op-reco-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 9px; border: 1px solid var(--border); border-radius: 99px;
+  background: var(--panel-2); color: inherit; cursor: pointer; font-size: 12px;
+}
+.op-reco-chip:hover { border-color: var(--primary); }
+.op-reco-name { font-weight: 700; }
+.op-reco-score { font-variant-numeric: tabular-nums; font-weight: 700; }
+.op-reco-empty { margin-top: 6px; color: var(--text-3); font-size: 12px; }
 .op-main { display: grid; grid-template-columns: 310px minmax(0, 1fr); gap: 12px; padding: 12px 14px 20px; }
 .op-side, .op-feed { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
 .op-card { padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 7px; }

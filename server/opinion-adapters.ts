@@ -67,51 +67,146 @@ export function normalizeXueqiuStatus(
 class ZhihuAdapter implements OpinionSourceAdapter {
   platform = 'zhihu' as const
 
-  async fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult> {
-    const token = subscription.platformUserId || subscription.profileUrl.match(/\/people\/([^/?#]+)/)?.[1] || ''
-    if (!token) throw new Error('知乎订阅缺少主页用户标识')
-    const headers = {
-      Accept: 'application/json',
-      'User-Agent': 'Mozilla/5.0',
+  private headers(referer: string, acceptJson = true): Record<string, string> {
+    const cookie = process.env.ZHIHU_COOKIE?.trim()
+    return {
+      Accept: acceptJson ? 'application/json, text/plain, */*' : 'text/html,application/xhtml+xml',
+      'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      Referer: referer,
+      Origin: 'https://www.zhihu.com',
+      ...(cookie ? { Cookie: cookie } : {}),
     }
-    const memberRes = await fetch(`https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}`, { headers })
-    if (!memberRes.ok) throw new Error(`知乎用户信息 ${memberRes.status}`)
-    const member = await memberRes.json() as Record<string, unknown>
-    const nickname = String(member.name ?? subscription.nickname).trim()
-    const memberId = String(member.id ?? '')
-    if (!nickname || !memberId) throw new Error('知乎用户信息不完整，无法确认内容作者')
+  }
 
-    const secret = process.env.ZHIHU_ACCESS_SECRET?.trim()
-    if (!secret) throw new Error('缺少 ZHIHU_ACCESS_SECRET，无法调用知乎开放平台')
-    const searchUrl = new URL('https://developer.zhihu.com/api/v1/content/zhihu_search')
-    searchUrl.searchParams.set('Query', nickname)
-    searchUrl.searchParams.set('Count', '10')
-    searchUrl.searchParams.set('SearchDB', 'realtime')
-    const searchRes = await fetch(searchUrl, {
-      headers: {
-        Authorization: `Bearer ${secret}`,
-        'X-Request-Timestamp': String(Math.floor(Date.now() / 1000)),
-        'Content-Type': 'application/json',
-      },
-    })
-    if (!searchRes.ok) {
-      const text = await searchRes.text().catch(() => '')
-      throw new Error(`知乎开放平台 ${searchRes.status}: ${text.slice(0, 160)}`)
+  private async fetchJson(url: string, referer: string): Promise<Record<string, unknown>> {
+    const res = await fetch(url, { headers: this.headers(referer) })
+    const text = await res.text().catch(() => '')
+    if (!res.ok) throw new Error(`知乎接口 ${res.status}: ${text.slice(0, 160)}`)
+    return JSON.parse(text) as Record<string, unknown>
+  }
+
+  private async fetchPaged(
+    token: string,
+    kind: 'answers' | 'articles',
+  ): Promise<Array<Record<string, unknown>>> {
+    const items: Array<Record<string, unknown>> = []
+    for (let page = 0; page < 2; page++) {
+      const offset = page * 20
+      const include = kind === 'answers'
+        ? 'data[*].is_normal,content,excerpt,created_time,updated_time,question,author'
+        : 'data[*].content,excerpt,created,updated,title,author'
+      const url = `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}/${kind}` +
+        `?include=${encodeURIComponent(include)}&offset=${offset}&limit=20&sort_by=created`
+      const json = await this.fetchJson(url, `https://www.zhihu.com/people/${token}`)
+      const data = Array.isArray(json.data) ? json.data as Array<Record<string, unknown>> : []
+      items.push(...data)
+      const paging = json.paging && typeof json.paging === 'object'
+        ? json.paging as Record<string, unknown>
+        : {}
+      if (data.length < 20 || paging.is_end === true) break
+      await new Promise((resolve) => setTimeout(resolve, 200))
     }
-    const searchJson = await searchRes.json() as Record<string, unknown>
-    const payload = (searchJson.data ?? searchJson.Data ?? searchJson) as Record<string, unknown> | unknown[]
-    const candidates = Array.isArray(payload)
-      ? payload
-      : (payload.items ?? payload.Items ?? payload.results ?? payload.Results ?? [])
-    const items = Array.isArray(candidates) ? candidates as Array<Record<string, unknown>> : []
-    const documents = items.flatMap<OpinionDocumentInput>((item) => {
+    return items
+  }
+
+  private extractInitialEntities(html: string): {
+    answers: Array<Record<string, unknown>>
+    articles: Array<Record<string, unknown>>
+  } {
+    const match = html.match(/<script id="js-initialData"[^>]*>([\s\S]*?)<\/script>/)
+      ?? html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)
+    if (!match?.[1]) return { answers: [], articles: [] }
+    try {
+      const json = JSON.parse(match[1]) as Record<string, unknown>
+      const state = (json.initialState ?? json.props ?? json) as Record<string, unknown>
+      const entities = (state.entities ?? (state.pageProps as Record<string, unknown> | undefined)?.entities ?? {}) as Record<string, unknown>
+      const answers = Object.values((entities.answers ?? {}) as Record<string, Record<string, unknown>>)
+      const articles = Object.values((entities.articles ?? {}) as Record<string, Record<string, unknown>>)
+      return { answers, articles }
+    } catch {
+      return { answers: [], articles: [] }
+    }
+  }
+
+  private async fetchFromProfilePages(token: string): Promise<Array<Record<string, unknown> & { __kind: 'answer' | 'article' }>> {
+    const pages = [
+      { path: 'answers', kind: 'answer' as const },
+      { path: 'posts', kind: 'article' as const },
+    ]
+    const items: Array<Record<string, unknown> & { __kind: 'answer' | 'article' }> = []
+    for (const page of pages) {
+      const res = await fetch(`https://www.zhihu.com/people/${encodeURIComponent(token)}/${page.path}`, {
+        headers: this.headers(`https://www.zhihu.com/people/${token}`, false),
+      })
+      if (!res.ok) continue
+      const html = await res.text()
+      const entities = this.extractInitialEntities(html)
+      const raw = page.kind === 'answer' ? entities.answers : entities.articles
+      for (const item of raw) items.push({ ...item, __kind: page.kind })
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    }
+    return items
+  }
+
+  private toDocument(
+    subscription: OpinionSubscription,
+    token: string,
+    nickname: string,
+    memberId: string,
+    item: Record<string, unknown>,
+    kind: 'answer' | 'article',
+  ): OpinionDocumentInput | null {
+    const rawId = String(item.id ?? item.ContentID ?? item.content_id ?? '')
+    if (!rawId) return null
+    const question = item.question && typeof item.question === 'object'
+      ? item.question as Record<string, unknown>
+      : {}
+    const title = String(
+      item.title ?? item.Title ?? question.title ?? `${nickname}的${kind === 'answer' ? '回答' : '文章'}`,
+    )
+    if (isExplicitRepost(title)) return null
+    const author = item.author && typeof item.author === 'object'
+      ? item.author as Record<string, unknown>
+      : {}
+    const authorToken = String(author.url_token ?? author.urlToken ?? '')
+    const authorName = String(author.name ?? item.AuthorName ?? nickname).trim()
+    if (authorToken && authorToken !== token) return null
+    if (!authorToken && authorName && authorName !== nickname) return null
+    const url = kind === 'answer'
+      ? String(item.url ?? (question.id ? `https://www.zhihu.com/question/${question.id}/answer/${rawId}` : ''))
+      : String(item.url ?? `https://zhuanlan.zhihu.com/p/${rawId}`)
+    const content = stripHtml(item.content ?? item.excerpt ?? item.ContentText ?? item.content_text ?? item.description)
+    if (!content) return null
+    return {
+      subscriptionId: subscription.id,
+      platform: this.platform,
+      platformPostId: `${kind}:${rawId}`,
+      authorId: String(author.id ?? memberId),
+      authorName: nickname,
+      profileUrl: `https://www.zhihu.com/people/${token}`,
+      url,
+      title,
+      content,
+      publishedAt: numberTime(item.created_time ?? item.created ?? item.updated_time ?? item.updated ?? item.EditTime),
+      contentKind: 'original',
+      collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
+    }
+  }
+
+  private documentsFromSearch(
+    subscription: OpinionSubscription,
+    token: string,
+    nickname: string,
+    memberId: string,
+    items: Array<Record<string, unknown>>,
+  ): OpinionDocumentInput[] {
+    return items.flatMap<OpinionDocumentInput>((item) => {
       const author = item.author && typeof item.author === 'object'
         ? item.author as Record<string, unknown>
         : {}
       const authorName = String(item.AuthorName ?? item.author_name ?? author.name ?? '').trim()
       const contentType = String(item.ContentType ?? item.content_type ?? '').toLowerCase()
       const rawId = String(item.ContentID ?? item.content_id ?? item.id ?? '')
-      const platformPostId = `${contentType}:${rawId}`
       const title = String(item.Title ?? item.title ?? `${nickname}的内容`)
       if (
         authorName !== nickname ||
@@ -122,7 +217,7 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       return [{
         subscriptionId: subscription.id,
         platform: this.platform,
-        platformPostId,
+        platformPostId: `${contentType}:${rawId}`,
         authorId: memberId,
         authorName: nickname,
         profileUrl: `https://www.zhihu.com/people/${token}`,
@@ -134,6 +229,96 @@ class ZhihuAdapter implements OpinionSourceAdapter {
         collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
       }]
     }).filter((item) => item.content)
+  }
+
+  private async fetchFromOpenSearch(nickname: string): Promise<Array<Record<string, unknown>>> {
+    const secret = process.env.ZHIHU_ACCESS_SECRET?.trim()
+    if (!secret) return []
+    const searchUrl = new URL('https://developer.zhihu.com/api/v1/content/zhihu_search')
+    searchUrl.searchParams.set('Query', nickname)
+    searchUrl.searchParams.set('Count', '10')
+    searchUrl.searchParams.set('SearchDB', 'realtime')
+    const searchRes = await fetch(searchUrl, {
+      headers: {
+        Authorization: `Bearer ${secret}`,
+        'X-Request-Timestamp': String(Math.floor(Date.now() / 1000)),
+        'Content-Type': 'application/json',
+      },
+    })
+    if (!searchRes.ok) return []
+    const searchJson = await searchRes.json() as Record<string, unknown>
+    const payload = (searchJson.data ?? searchJson.Data ?? searchJson) as Record<string, unknown> | unknown[]
+    const candidates = Array.isArray(payload)
+      ? payload
+      : (payload.items ?? payload.Items ?? payload.results ?? payload.Results ?? [])
+    return Array.isArray(candidates) ? candidates as Array<Record<string, unknown>> : []
+  }
+
+  async fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult> {
+    const token = subscription.platformUserId || subscription.profileUrl.match(/\/people\/([^/?#]+)/)?.[1] || ''
+    if (!token) throw new Error('知乎订阅缺少主页用户标识')
+    const profileUrl = `https://www.zhihu.com/people/${token}`
+    let nickname = subscription.nickname.trim()
+    let memberId = token
+    try {
+      const member = await this.fetchJson(
+        `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}?include=allow_message,headline`,
+        profileUrl,
+      )
+      nickname = String(member.name ?? nickname).trim() || nickname
+      memberId = String(member.id ?? token)
+    } catch {
+      if (!nickname) nickname = token
+    }
+    if (!nickname) throw new Error('知乎用户信息不完整，无法确认内容作者')
+
+    const documents: OpinionDocumentInput[] = []
+    const cookie = process.env.ZHIHU_COOKIE?.trim()
+    const errors: string[] = []
+
+    if (cookie) {
+      try {
+        const [answers, articles] = await Promise.all([
+          this.fetchPaged(token, 'answers'),
+          this.fetchPaged(token, 'articles'),
+        ])
+        for (const item of answers) {
+          const doc = this.toDocument(subscription, token, nickname, memberId, item, 'answer')
+          if (doc) documents.push(doc)
+        }
+        for (const item of articles) {
+          const doc = this.toDocument(subscription, token, nickname, memberId, item, 'article')
+          if (doc) documents.push(doc)
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error))
+      }
+    }
+
+    if (documents.length === 0) {
+      try {
+        const pageItems = await this.fetchFromProfilePages(token)
+        for (const item of pageItems) {
+          const doc = this.toDocument(subscription, token, nickname, memberId, item, item.__kind)
+          if (doc) documents.push(doc)
+        }
+      } catch (error) {
+        errors.push(error instanceof Error ? error.message : String(error))
+      }
+    }
+
+    if (documents.length === 0) {
+      const searchItems = await this.fetchFromOpenSearch(nickname)
+      documents.push(...this.documentsFromSearch(subscription, token, nickname, memberId, searchItems))
+    }
+
+    if (documents.length === 0 && errors.length && !process.env.ZHIHU_ACCESS_SECRET?.trim() && !cookie) {
+      throw new Error('缺少 ZHIHU_COOKIE 或 ZHIHU_ACCESS_SECRET，无法采集知乎内容')
+    }
+    if (documents.length === 0 && errors.some((item) => item.includes('401') || item.includes('403'))) {
+      throw new Error('知乎登录态无效或已过期，请更新 .env 中的 ZHIHU_COOKIE')
+    }
+
     documents.sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
     const lastPostIndex = subscription.lastPostId
       ? documents.findIndex((document) => document.platformPostId === subscription.lastPostId)
@@ -142,7 +327,7 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       documents: lastPostIndex >= 0 ? documents.slice(0, lastPostIndex) : documents,
       platformUserId: token,
       nickname,
-      profileUrl: `https://www.zhihu.com/people/${token}`,
+      profileUrl,
     }
   }
 }

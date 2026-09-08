@@ -77,50 +77,56 @@ test('雪球过滤纯转发并只保留转评中的本人评论', () => {
   assert.doesNotMatch(commentary?.content ?? '', /原帖全文/)
 })
 
-test('知乎按用户接口采集本人回答文章并排除显式转载', async () => {
+test('知乎优先用作者主页接口采集回答文章并排除显式转载', async () => {
   const originalFetch = globalThis.fetch
   const originalSecret = process.env.ZHIHU_ACCESS_SECRET
+  const originalCookie = process.env.ZHIHU_COOKIE
   process.env.ZHIHU_ACCESS_SECRET = 'test-secret'
+  process.env.ZHIHU_COOKIE = 'z_c0=test-cookie'
   globalThis.fetch = (async (input: string | URL | Request) => {
     const url = String(input)
-    if (/\/members\/author-token$/.test(url)) {
+    if (/\/members\/author-token(\?|$)/.test(url)) {
       return Response.json({ id: 'member-id', url_token: 'author-token', name: '目标博主' })
     }
-    if (url.includes('/zhihu_search?')) {
+    if (url.includes('/members/author-token/answers')) {
       return Response.json({
-        data: { items: [
+        paging: { is_end: true },
+        data: [
           {
-            ContentID: 'answer-1',
-            ContentType: 'Answer',
-            AuthorName: '目标博主',
-            Title: '如何判断公司盈利质量？',
-            ContentText: '<p>重点检查经营现金流和应收账款。</p>',
-            EditTime: 1_750_000_000,
+            id: 'answer-1',
+            content: '<p>重点检查经营现金流和应收账款。</p>',
+            created_time: 1_750_000_000,
+            question: { id: '111', title: '如何判断公司盈利质量？' },
+            author: { id: 'member-id', url_token: 'author-token', name: '目标博主' },
           },
           {
-            ContentID: 'answer-other',
-            ContentType: 'Answer',
-            AuthorName: '其他作者',
-            Title: '无关回答',
-            ContentText: '不应采集',
+            id: 'answer-other',
+            content: '不应采集',
+            question: { title: '无关回答' },
+            author: { url_token: 'other-author', name: '其他作者' },
+          },
+        ],
+      })
+    }
+    if (url.includes('/members/author-token/articles')) {
+      return Response.json({
+        paging: { is_end: true },
+        data: [
+          {
+            id: 'article-repost',
+            title: '【转载：其他作者】市场复盘',
+            content: '纯转载内容',
+            created: 1_750_000_100,
+            author: { url_token: 'author-token', name: '目标博主' },
           },
           {
-            ContentID: 'article-repost',
-            ContentType: 'Article',
-            AuthorName: '目标博主',
-            Title: '【转载：其他作者】市场复盘',
-            ContentText: '纯转载内容',
-            EditTime: 1_750_000_100,
+            id: 'article-1',
+            title: '我的行业观察',
+            content: '<p>库存周期正在改善。</p>',
+            created: 1_750_000_200,
+            author: { url_token: 'author-token', name: '目标博主' },
           },
-          {
-            ContentID: 'article-1',
-            ContentType: 'Article',
-            AuthorName: '目标博主',
-            Title: '我的行业观察',
-            ContentText: '<p>库存周期正在改善。</p>',
-            EditTime: 1_750_000_200,
-          },
-        ] },
+        ],
       })
     }
     throw new Error(`unexpected request: ${url}`)
@@ -150,5 +156,59 @@ test('知乎按用户接口采集本人回答文章并排除显式转载', async
     globalThis.fetch = originalFetch
     if (originalSecret === undefined) delete process.env.ZHIHU_ACCESS_SECRET
     else process.env.ZHIHU_ACCESS_SECRET = originalSecret
+    if (originalCookie === undefined) delete process.env.ZHIHU_COOKIE
+    else process.env.ZHIHU_COOKIE = originalCookie
+  }
+})
+
+test('知乎无 Cookie 时回退开放搜索', async () => {
+  const originalFetch = globalThis.fetch
+  const originalSecret = process.env.ZHIHU_ACCESS_SECRET
+  const originalCookie = process.env.ZHIHU_COOKIE
+  process.env.ZHIHU_ACCESS_SECRET = 'test-secret'
+  delete process.env.ZHIHU_COOKIE
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input)
+    if (/\/members\/author-token(\?|$)/.test(url)) {
+      return Response.json({ id: 'member-id', url_token: 'author-token', name: '目标博主' })
+    }
+    if (url.includes('/people/author-token/')) {
+      return new Response('<html></html>', { status: 200 })
+    }
+    if (url.includes('/zhihu_search?')) {
+      return Response.json({
+        data: { items: [{
+          ContentID: 'answer-1',
+          ContentType: 'Answer',
+          AuthorName: '目标博主',
+          Title: '如何判断公司盈利质量？',
+          ContentText: '<p>重点检查经营现金流和应收账款。</p>',
+          EditTime: 1_750_000_000,
+        }] },
+      })
+    }
+    throw new Error(`unexpected request: ${url}`)
+  }) as typeof fetch
+  try {
+    const result = await OPINION_ADAPTERS.zhihu.fetchLatest({
+      id: 'subscription-2b',
+      platform: 'zhihu',
+      platformUserId: 'author-token',
+      nickname: '',
+      profileUrl: 'https://www.zhihu.com/people/author-token',
+      enabled: true,
+      intervalMinutes: 15,
+      lastCheckedAt: 0,
+      authStatus: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    })
+    assert.equal(result.documents[0]?.platformPostId, 'answer:answer-1')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalSecret === undefined) delete process.env.ZHIHU_ACCESS_SECRET
+    else process.env.ZHIHU_ACCESS_SECRET = originalSecret
+    if (originalCookie === undefined) delete process.env.ZHIHU_COOKIE
+    else process.env.ZHIHU_COOKIE = originalCookie
   }
 })

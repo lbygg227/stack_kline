@@ -103,7 +103,7 @@ async function doSync(subscriptionId: string, stocks: SnapshotStock[]): Promise<
       ? result.activeTotal > 0
         ? `没有新发言，当前已收录 ${result.activeTotal} 篇有效内容`
         : subscription.platform === 'zhihu'
-          ? '知乎开放搜索未命中该作者的回答或文章；点赞、纯转载和其他作者内容已排除'
+          ? '未获取到该作者本人的回答或文章；点赞、纯转载和其他作者内容已排除。可在 .env 填写 ZHIHU_COOKIE 后重试'
           : '未发现原创发言；点赞和纯转发已排除'
       : `本次获取 ${fetched.documents.length} 篇本人发言，当前共 ${result.activeTotal} 篇有效内容`
     updateSubscriptionRuntime(subscriptionId, { lastNotice: result.message })
