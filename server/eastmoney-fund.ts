@@ -39,46 +39,57 @@ const num = (v: string | undefined): number => {
 
 export async function fetchFundFlow(code: string, days = 20): Promise<FundFlowResult> {
   const secid = toSecid(code)
-  const url =
-    `https://push2his.eastmoney.com/api/qt/stock/fflow/kline/get` +
-    `?lmt=${days}&klt=101&secid=${secid}` +
-    `&fields1=f1,f2,f3,f7` +
-    `&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65`
+  const headers = {
+    Referer: 'https://data.eastmoney.com/zjlx/',
+    'User-Agent':
+      'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
+  }
 
-  const headers = { Referer: 'https://quote.eastmoney.com/' }
+  const hosts = [
+    'https://push2his.eastmoney.com',
+    'https://push2delay.eastmoney.com',
+  ]
 
   let lastErr: unknown
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const res = await fetch(url, { headers })
-      if (!res.ok) throw new Error(`eastmoney-fund http ${res.status}`)
-      const json = (await res.json()) as {
-        rc?: number
-        data?: { code?: string; name?: string; klines?: string[] }
-      }
-      if (json.rc !== 0 || !json.data) throw new Error('eastmoney-fund empty response')
+  for (const host of hosts) {
+    const url =
+      `${host}/api/qt/stock/fflow/kline/get` +
+      `?lmt=${days}&klt=101&secid=${secid}` +
+      `&fields1=f1,f2,f3,f7` +
+      `&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65`
 
-      const klines = json.data.klines ?? []
-      const result: FundFlowDay[] = klines.map((line) => {
-        const parts = line.split(',')
-        return {
-          date: parts[0] ?? '',
-          mainNet: num(parts[1]),
-          smallNet: num(parts[2]),
-          midNet: num(parts[3]),
-          bigNet: num(parts[4]),
-          superBigNet: num(parts[5]),
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(url, { headers })
+        if (!res.ok) throw new Error(`eastmoney-fund http ${res.status}`)
+        const json = (await res.json()) as {
+          rc?: number
+          data?: { code?: string; name?: string; klines?: string[] }
         }
-      })
+        if (json.rc !== 0 || !json.data) throw new Error('eastmoney-fund empty response')
 
-      return {
-        code,
-        name: json.data.name ?? '',
-        days: result,
+        const klines = json.data.klines ?? []
+        const result: FundFlowDay[] = klines.map((line) => {
+          const parts = line.split(',')
+          return {
+            date: parts[0] ?? '',
+            mainNet: num(parts[1]),
+            smallNet: num(parts[2]),
+            midNet: num(parts[3]),
+            bigNet: num(parts[4]),
+            superBigNet: num(parts[5]),
+          }
+        })
+
+        return {
+          code,
+          name: json.data.name ?? '',
+          days: result,
+        }
+      } catch (e) {
+        lastErr = e
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 400 * attempt))
       }
-    } catch (e) {
-      lastErr = e
-      if (attempt < 3) await new Promise((r) => setTimeout(r, 300 * attempt))
     }
   }
   throw lastErr
