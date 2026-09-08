@@ -56,10 +56,14 @@ npm run dev
 
 ```bash
 cp .env.example .env
-# 至少填写 ZHIHU_ACCESS_SECRET 或 XUEQIU_COOKIE
+# 知乎优先填 ZHIHU_COOKIE（浏览器登录后复制），雪球填 XUEQIU_COOKIE
+# 金十快讯/日历填 JIN10_MCP_TOKEN（可选 JIN10_MCP_URL）
+# 龙虎榜填 FUYAO_API_KEY（同花顺扶摇）
 ```
 
-知乎使用数据开放平台 `Access Secret`；雪球时间线受风控保护，需要登录后的完整 Cookie。没有这两项凭据时，观点板块的手动导入、原文留档和 AI 分析仍可使用。
+金十官方 MCP 接入后，「资讯事件」页可直读快讯与经济日历；「采集最新资讯」会优先入库 A 股相关金十快讯。配置 `FUYAO_API_KEY` 后，选股页「龙虎榜」通道可拉取机构/游资上榜净买额。Token 只放服务端 `.env`，勿提交仓库。
+
+知乎作者主页内容优先用登录后的 `ZHIHU_COOKIE` 直接拉取回答和文章；开放平台 `ZHIHU_ACCESS_SECRET` 只作兜底搜索。雪球时间线受风控保护，需要登录后的完整 Cookie。没有这些凭据时，观点板块的手动导入、原文留档和 AI 分析仍可使用。
 
 ### 📱 手机/远程访问（Cloudflare quick tunnel）
 
