@@ -156,6 +156,7 @@ export function consumeScreenerSeed(): ScreenerSeed | null {
 export function goFullChart(code?: string, name?: string) {
   const c = code ?? activeCandidateCode.value ?? marketState.currentCode
   const n = name ?? candidates.value.find((x) => x.code === c)?.name ?? marketState.currentName
+  workbenchOpen.value = false
   selectStock(c, n)
   activeCandidateCode.value = c
   if (isMobile.value) setMobileTab('market')

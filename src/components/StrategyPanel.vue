@@ -20,6 +20,8 @@ const {
   getActiveCandidate,
   consumeScreenerSeed,
   refreshCandidates,
+  workbenchOpen,
+  closeWorkbench,
 } = useResearch()
 
 /* ---- 表单状态 ---- */
@@ -1137,12 +1139,27 @@ const fmtYi = (v: number) => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`
         </template>
       </div>
 
-      <CandidateWorkbench
-        class="sp-workbench"
-        :candidate="activeCandidate"
-        :code="activeCandidateCode"
-      />
     </div>
+
+    <Transition name="fade">
+      <div
+        v-if="workbenchOpen && activeCandidateCode"
+        class="sp-candidate-mask"
+        @click.self="closeWorkbench"
+      >
+        <div class="sp-candidate-panel">
+          <div class="sp-candidate-topbar">
+            <span>候选分析</span>
+            <button class="sp-candidate-close" @click="closeWorkbench">关闭 ✕</button>
+          </div>
+          <CandidateWorkbench
+            class="sp-modal-workbench"
+            :candidate="activeCandidate"
+            :code="activeCandidateCode"
+          />
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -1202,13 +1219,11 @@ const fmtYi = (v: number) => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`
 /* 中：结果 */
 .sp-results {
   position: relative;
-  width: 320px;
-  flex-shrink: 0;
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--border);
 }
 
 .st-mode-tabs {
@@ -1306,6 +1321,62 @@ const fmtYi = (v: number) => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`
 .sp-workbench {
   flex: 1;
   min-width: 0;
+}
+
+.sp-candidate-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  padding: 18px;
+}
+.sp-candidate-panel {
+  position: relative;
+  width: min(1240px, 100%);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.28);
+}
+.sp-candidate-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+  flex-shrink: 0;
+}
+.sp-candidate-topbar span {
+  font-size: 13px;
+  font-weight: 700;
+}
+.sp-candidate-close {
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  color: var(--text-2);
+  font-size: 12px;
+  cursor: pointer;
+}
+.sp-modal-workbench {
+  flex: 1;
+  min-height: 0;
+}
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.18s ease;
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 
 .ai-box {
@@ -1608,6 +1679,12 @@ const fmtYi = (v: number) => `${v >= 0 ? '+' : ''}${(v / 1e8).toFixed(2)}亿`
 }
 
 @media (max-width: 820px) {
+  .sp-candidate-mask {
+    padding: 0;
+  }
+  .sp-candidate-panel {
+    border-radius: 0;
+  }
   .sp-main {
     flex-direction: column;
   }
