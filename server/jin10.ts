@@ -11,7 +11,6 @@ try {
 
 const MCP_URL = (process.env.JIN10_MCP_URL || 'https://mcp.jin10.com/mcp').trim()
 const TOKEN = (process.env.JIN10_MCP_TOKEN || '').trim()
-const PROTOCOL = process.env.JIN10_MCP_PROTOCOL_VERSION || '2025-11-25'
 
 export function hasJin10(): boolean {
   return !!TOKEN

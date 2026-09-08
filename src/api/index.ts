@@ -16,6 +16,7 @@ import type {
   OpinionStockRecoResponse,
   FundFlowResult,
   FundFlowRankStatus,
+  FundFlowRefreshProgress,
   FundStockRecoResponse,
   DragonTigerBoardType,
   DragonTigerCacheEntry,
@@ -143,13 +144,29 @@ export async function refreshFundRank(opts: {
   const res = await fetch('/api/fund/refresh', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(opts),
+    body: JSON.stringify({ ...opts, wait: true }),
   })
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { error?: string } | null
     throw new Error(err?.error ?? `fund refresh http ${res.status}`)
   }
   return (await res.json()) as { refreshed: number; failed: number; poolSize: number; updatedAt: number }
+}
+
+export async function startFundRankRefresh(opts: {
+  watchlist?: string[]
+  topAmount?: number
+} = {}): Promise<FundFlowRefreshProgress> {
+  const res = await fetch('/api/fund/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `fund refresh http ${res.status}`)
+  }
+  return (await res.json()) as FundFlowRefreshProgress
 }
 
 export async function fetchDragonTigerStockReco(opts: {

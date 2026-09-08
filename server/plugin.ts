@@ -54,6 +54,7 @@ import {
   FundFlowRankScheduler,
   fundFlowRankStatus,
   getFundFlowCacheEntry,
+  getFundFlowRefreshProgress,
   refreshFundFlowRank,
 } from './fund-stock-reco.ts'
 import { hasFuyao, type DragonTigerBoardType } from './fuyao.ts'
@@ -312,20 +313,32 @@ export function marketDataPlugin(): Plugin {
         }
 
         if (path === '/api/fund/status') {
-          sendJson(res, 200, fundFlowRankStatus())
+          sendJson(res, 200, { ...fundFlowRankStatus(), progress: getFundFlowRefreshProgress() })
           return
         }
 
         if (path === '/api/fund/refresh' && req.method === 'POST') {
+          const progress = getFundFlowRefreshProgress()
+          if (progress.running) {
+            sendJson(res, 200, progress)
+            return
+          }
           try {
-            const body = JSON.parse((await readBody(req)) || '{}') as { watchlist?: string[]; topAmount?: number }
+            const body = JSON.parse((await readBody(req)) || '{}') as { watchlist?: string[]; topAmount?: number; wait?: boolean }
             const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
-            const result = await refreshFundFlowRank({
+            const options = {
               stocks: snap ? service.stocksWithIndustry() : [],
               watchlist: Array.isArray(body.watchlist) ? body.watchlist : listWatchCandidates({ limit: 100 }).map((c) => c.code),
               topAmount: Number(body.topAmount) || 300,
+            }
+            if (body.wait) {
+              sendJson(res, 200, await refreshFundFlowRank(options))
+              return
+            }
+            void refreshFundFlowRank(options).catch((e) => {
+              console.warn('[fund-flow] 手动刷新失败:', e)
             })
-            sendJson(res, 200, result)
+            sendJson(res, 200, getFundFlowRefreshProgress())
           } catch (e) {
             sendJson(res, 502, { error: e instanceof Error ? e.message : String(e) })
           }

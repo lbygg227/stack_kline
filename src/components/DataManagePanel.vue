@@ -1,9 +1,13 @@
 <script setup lang="ts">
-import { onBeforeUnmount, ref } from 'vue'
-import type { PrefetchProgress, UpdateStatus } from '../types'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import type { FundFlowRankStatus, PrefetchProgress, UpdateStatus } from '../types'
 import {
+  collectMarketEvents,
+  fetchFundRankStatus,
+  fetchJin10Status,
   getPrefetchProgress,
   getUpdateStatus,
+  startFundRankRefresh,
   runUpdate,
   startPrefetch,
   syncLatestDailyKlines,
@@ -15,8 +19,15 @@ const latestResult = ref('')
 const error = ref('')
 const updateStatus = ref<UpdateStatus | null>(null)
 const updateBusy = ref(false)
+const fundStatus = ref<FundFlowRankStatus | null>(null)
+const fundResult = ref('')
+const fundBusy = ref(false)
+const eventBusy = ref(false)
+const eventResult = ref('')
+const jin10Configured = ref(false)
 
 let pollTimer: number | undefined
+let fundPollTimer: number | undefined
 
 async function doPrefetch() {
   if (prefetchProg.value.running) return
@@ -67,7 +78,55 @@ async function doRunUpdate() {
   }
 }
 
-const fmtTime = (ts: number) => {
+async function loadFundStatus() {
+  try {
+    fundStatus.value = await fetchFundRankStatus()
+  } catch { /* ignore */ }
+}
+
+async function pollFundStatus() {
+  await loadFundStatus()
+  if (fundStatus.value?.progress.running) {
+    fundPollTimer = window.setTimeout(pollFundStatus, 1000)
+  } else {
+    fundBusy.value = false
+  }
+}
+
+async function doFundRefresh() {
+  if (fundStatus.value?.progress.running || fundBusy.value) return
+  fundBusy.value = true
+  fundResult.value = ''
+  try {
+    await startFundRankRefresh()
+    await pollFundStatus()
+  } catch (e) {
+    fundBusy.value = false
+    fundResult.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function loadJin10Status() {
+  try {
+    jin10Configured.value = (await fetchJin10Status()).configured
+  } catch { /* ignore */ }
+}
+
+async function doCollectEvents() {
+  if (eventBusy.value) return
+  eventBusy.value = true
+  eventResult.value = ''
+  try {
+    const r = await collectMarketEvents()
+    eventResult.value = `本次新增 ${r.created} 条 · 当前 ${r.total} 条 · 来源 ${r.provider}${r.message ? ' · ' + r.message : ''}`
+  } catch (e) {
+    eventResult.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    eventBusy.value = false
+  }
+}
+
+const fmtTime = (ts?: number) => {
   if (!ts) return '—'
   const d = new Date(ts)
   const p = (n: number) => String(n).padStart(2, '0')
@@ -75,11 +134,20 @@ const fmtTime = (ts: number) => {
 }
 
 const pct = (p: PrefetchProgress) => (p.total > 0 ? Math.round((p.done / p.total) * 100) + '%' : '0%')
+const fundPct = computed(() => {
+  const p = fundStatus.value?.progress
+  return p && p.total > 0 ? Math.round((p.done / p.total) * 100) + '%' : '0%'
+})
 
 void pollPrefetch()
 void loadUpdateStatus()
+void loadFundStatus()
+void loadJin10Status()
 
-onBeforeUnmount(() => window.clearTimeout(pollTimer))
+onBeforeUnmount(() => {
+  window.clearTimeout(pollTimer)
+  window.clearTimeout(fundPollTimer)
+})
 </script>
 
 <template>
@@ -116,6 +184,37 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
       </div>
       <div v-if="latestResult" class="dm-result">{{ latestResult }}</div>
       <div v-if="error" class="dm-result dm-error">{{ error }}</div>
+    </section>
+
+    <section class="dm-section">
+      <h3 class="dm-label">资金流数据</h3>
+      <p class="dm-desc">刷新候选池个股主力资金流，供资金面选股与研究工作台使用。交易时段后会自动刷新一次，也可手动刷新。</p>
+      <div class="dm-row">
+        <button class="btn" @click="doFundRefresh" :disabled="fundStatus?.progress.running || fundBusy">
+          {{ fundStatus?.progress.running || fundBusy ? '刷新中…' : '手动刷新资金流' }}
+        </button>
+        <span v-if="fundStatus" class="dm-hint">
+          候选池 {{ fundStatus.poolSize }} 只 · 上次刷新 {{ fmtTime(fundStatus.lastRefreshAt) }}
+        </span>
+      </div>
+      <div v-if="fundStatus?.progress.running" class="dm-progress">
+        <div class="dm-progress-bar" :style="{ width: fundPct }"></div>
+      </div>
+      <div v-if="fundStatus?.progress.running" class="dm-hint">{{ fundStatus.progress.message }}</div>
+      <div v-if="fundStatus?.lastError" class="dm-result dm-error">{{ fundStatus.lastError }}</div>
+      <div v-if="fundResult" class="dm-result">{{ fundResult }}</div>
+    </section>
+
+    <section class="dm-section">
+      <h3 class="dm-label">金十资讯 / 一级事件</h3>
+      <p class="dm-desc">金十/一级资讯 7×24 定时采集；需要立即同步时可手动触发。</p>
+      <div class="dm-row">
+        <button class="btn" @click="doCollectEvents" :disabled="eventBusy">
+          {{ eventBusy ? '采集中…' : '立即采集资讯' }}
+        </button>
+        <span class="dm-hint">{{ jin10Configured ? '金十已配置' : '金十未配置' }}</span>
+      </div>
+      <div v-if="eventResult" class="dm-result">{{ eventResult }}</div>
     </section>
 
     <section class="dm-section">

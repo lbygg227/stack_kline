@@ -13,6 +13,27 @@ const DEFAULT_TOP_AMOUNT = 300
 const FETCH_CONCURRENCY = 6
 const FETCH_DAYS = 20
 
+export interface FundFlowRefreshProgress {
+  running: boolean
+  done: number
+  total: number
+  failed: number
+  message: string
+  lastRefreshAt?: number
+}
+
+const fundProgress: FundFlowRefreshProgress = {
+  running: false,
+  done: 0,
+  total: 0,
+  failed: 0,
+  message: '',
+}
+
+export function getFundFlowRefreshProgress(): FundFlowRefreshProgress {
+  return { ...fundProgress }
+}
+
 export interface FundFlowCacheEntry {
   code: string
   name: string
@@ -224,13 +245,21 @@ export function pickFundFlowUniverse(options: {
   return [...picked.values()]
 }
 
-async function mapPool<T, R>(items: T[], concurrency: number, fn: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = []
-  let i = 0
+async function mapPool<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+  onProgress?: (done: number, total: number) => void,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let next = 0
+  let done = 0
   async function worker() {
-    while (i < items.length) {
-      const idx = i++
+    while (next < items.length) {
+      const idx = next++
       results[idx] = await fn(items[idx])
+      done += 1
+      onProgress?.(done, items.length)
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()))
@@ -254,37 +283,53 @@ export async function refreshFundFlowRank(options: {
   const prev = loadStore()
   const prevByCode = new Map(prev.entries.map((e) => [normalizeCode(e.code), e]))
 
-  const results = await mapPool(universe, FETCH_CONCURRENCY, async (stock) => {
-    try {
-      const flow: FundFlowResult = await fetchFundFlow(stock.code, fetchDays)
-      return {
-        code: normalizeCode(stock.code),
-        name: flow.name || stock.name,
-        industry: stock.industry,
-        price: stock.price,
-        changePct: stock.changePct,
-        amount: stock.amount,
-        updatedAt: Date.now(),
-        days: flow.days,
-      } satisfies FundFlowCacheEntry
-    } catch {
-      failed += 1
-      const old = prevByCode.get(normalizeCode(stock.code))
-      if (old?.days?.length) {
-        return {
-          ...old,
-          name: stock.name || old.name,
-          industry: stock.industry ?? old.industry,
-          price: stock.price ?? old.price,
-          changePct: stock.changePct ?? old.changePct,
-          amount: stock.amount ?? old.amount,
-        }
-      }
-      return null
-    }
-  })
+  fundProgress.running = true
+  fundProgress.done = 0
+  fundProgress.total = universe.length
+  fundProgress.failed = 0
+  fundProgress.message = universe.length ? `正在刷新资金流 0/${universe.length}` : '暂无候选池'
 
-  const entries = results.filter((x): x is FundFlowCacheEntry => !!x)
+  const results = await mapPool(
+    universe,
+    FETCH_CONCURRENCY,
+    async (stock) => {
+      try {
+        const flow: FundFlowResult = await fetchFundFlow(stock.code, fetchDays)
+        return {
+          code: normalizeCode(stock.code),
+          name: flow.name || stock.name,
+          industry: stock.industry,
+          price: stock.price,
+          changePct: stock.changePct,
+          amount: stock.amount,
+          updatedAt: Date.now(),
+          days: flow.days,
+        } satisfies FundFlowCacheEntry
+      } catch {
+        failed += 1
+        fundProgress.failed = failed
+        const old = prevByCode.get(normalizeCode(stock.code))
+        if (old?.days?.length) {
+          return {
+            ...old,
+            name: stock.name || old.name,
+            industry: stock.industry ?? old.industry,
+            price: stock.price ?? old.price,
+            changePct: stock.changePct ?? old.changePct,
+            amount: stock.amount ?? old.amount,
+          }
+        }
+        return null
+      }
+    },
+    (done, total) => {
+      fundProgress.done = done
+      fundProgress.total = total
+      fundProgress.message = `正在刷新资金流 ${done}/${total}${failed ? `（失败 ${failed}）` : ''}`
+    },
+  )
+
+  const entries = results.filter((x) => x != null) as FundFlowCacheEntry[]
   const updatedAt = Date.now()
   const errorMsg = failed
     ? entries.length
@@ -298,6 +343,14 @@ export async function refreshFundFlowRank(options: {
     lastError: errorMsg,
     entries,
   })
+
+  fundProgress.running = false
+  fundProgress.done = entries.length
+  fundProgress.total = universe.length
+  fundProgress.failed = failed
+  fundProgress.lastRefreshAt = updatedAt
+  fundProgress.message = `资金流刷新完成：${entries.length} 只，失败 ${failed} 只`
+
   return { refreshed: entries.length, failed, poolSize: entries.length, updatedAt }
 }
 

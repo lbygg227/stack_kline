@@ -549,12 +549,9 @@ export class MarketEventCollectScheduler {
     this.timer = null
   }
 
-  private inWindow(now = new Date()): boolean {
-    const w = now.getDay()
-    if (w < 1 || w > 5) return false
-    const mins = now.getHours() * 60 + now.getMinutes()
-    // 9:15–15:45
-    return mins >= 9 * 60 + 15 && mins <= 15 * 60 + 45
+  private inWindow(): boolean {
+    // 金十/一级资讯是 7x24 持续更新的信息源，不限制交易日或交易时段。
+    return true
   }
 
   async tick(getContext: () => { stocks: EventStockRef[]; watchlist?: string[] }) {

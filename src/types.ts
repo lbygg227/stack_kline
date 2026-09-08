@@ -996,11 +996,21 @@ export interface FundStockRecoResponse {
   poolSize: number
 }
 
+export interface FundFlowRefreshProgress {
+  running: boolean
+  done: number
+  total: number
+  failed: number
+  message: string
+  lastRefreshAt?: number
+}
+
 export interface FundFlowRankStatus {
   poolSize: number
   lastRefreshAt?: number
   lastError?: string
   updatedAt: number
+  progress: FundFlowRefreshProgress
 }
 
 export type DragonTigerBoardType = 'all' | 'org' | 'hot_money'
