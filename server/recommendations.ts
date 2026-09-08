@@ -10,6 +10,7 @@ import { buildFundStockReco } from './fund-stock-reco.ts'
 import { buildDragonTigerReco } from './dragon-tiger-stock-reco.ts'
 import { buildIndustryStats } from './screening-strategies.ts'
 import { readJson, writeJson } from './store.ts'
+import { getRecommendationWeights } from './recommendation-weights.ts'
 
 export type RecommendationStyle = 'trend' | 'limit_up' | 'pullback' | 'leader' | 'event' | 'fund' | 'opinion'
 export type RecommendationChannel = 'technical' | 'event' | 'opinion' | 'fund' | 'dragon'
@@ -344,7 +345,16 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
         return diff >= coolingDays
       })
     : [...byCode.values()]
-  const items = eligible.sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
+  const weights = getRecommendationWeights()
+  const rawItems = eligible.sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
+  const items = rawItems.map((item) => {
+    const weight = weights[item.style] ?? 1
+    return {
+      ...item,
+      score: Math.max(0, Math.min(100, Math.round(item.score * weight))),
+      confidence: Math.max(0, Math.min(100, Math.round(item.confidence * weight))),
+    }
+  }).sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
   const grouped: Record<RecommendationStyle, RecommendationRecord[]> = {
     trend: [],
     limit_up: [],

@@ -761,6 +761,25 @@ export async function fetchJin10Calendar(): Promise<{
   return (await res.json()) as { items: Array<Record<string, unknown>>; provider: string }
 }
 
+export async function fetchRecommendationWeights(): Promise<{ weights: Record<string, number> }> {
+  const res = await fetch('/api/recommendations/weights')
+  if (!res.ok) throw new Error(`recommendation weights http ${res.status}`)
+  return (await res.json()) as { weights: Record<string, number> }
+}
+
+export async function refreshRecommendationWeights(): Promise<{
+  weights: Record<string, number>
+  updatedAt: number
+  stats: { matured: number; winRate: number; averageReturnPct: number }
+}> {
+  const res = await fetch('/api/recommendations/weights', { method: 'POST' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `recommendation weights http ${res.status}`)
+  }
+  return (await res.json()) as { weights: Record<string, number>; updatedAt: number; stats: { matured: number; winRate: number; averageReturnPct: number } }
+}
+
 export async function fetchRecommendationPerformance(): Promise<RecommendationPerformanceStats> {
   const res = await fetch('/api/recommendations/performance')
   if (!res.ok) {

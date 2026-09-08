@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchRecommendationPerformance, runStyleBacktest } from '../api'
+import { fetchRecommendationPerformance, fetchRecommendationWeights, refreshRecommendationWeights, runStyleBacktest } from '../api'
 import type { BacktestableStyle, RecommendationPerformanceStats, StyleBacktestResult } from '../types'
 import { useMarket } from '../composables/useMarket'
 
@@ -18,6 +18,9 @@ const result = ref<StyleBacktestResult | null>(null)
 const perf = ref<RecommendationPerformanceStats | null>(null)
 const perfLoading = ref(false)
 const perfError = ref('')
+const weights = ref<Record<string, number>>({})
+const weightsLoading = ref(false)
+const weightsError = ref('')
 
 const codes = computed(() => {
   const seed = codesText.value.trim() || watchlist.value.map((s) => s.code).join(' ')
@@ -60,7 +63,35 @@ async function loadPerformance() {
   }
 }
 
-onMounted(() => void loadPerformance())
+async function loadWeights() {
+  weightsLoading.value = true
+  weightsError.value = ''
+  try {
+    weights.value = (await fetchRecommendationWeights()).weights
+  } catch (e) {
+    weightsError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    weightsLoading.value = false
+  }
+}
+
+async function refreshWeights() {
+  weightsLoading.value = true
+  weightsError.value = ''
+  try {
+    const result = await refreshRecommendationWeights()
+    weights.value = result.weights
+  } catch (e) {
+    weightsError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    weightsLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void loadPerformance()
+  void loadWeights()
+})
 
 const fmtPct = (v?: number) => (v == null ? '--' : (v > 0 ? '+' : '') + v.toFixed(2) + '%')
 const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
@@ -169,7 +200,14 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
       <section class="bt-perf">
         <div class="bt-perf-head">
           <h3>推荐表现追踪</h3>
-          <button class="btn" :disabled="perfLoading" @click="loadPerformance">{{ perfLoading ? '加载中…' : '刷新表现' }}</button>
+          <div class="bt-perf-actions">
+            <button class="btn" :disabled="perfLoading" @click="loadPerformance">{{ perfLoading ? '加载中…' : '刷新表现' }}</button>
+            <button class="btn" :disabled="weightsLoading" @click="refreshWeights">{{ weightsLoading ? '计算中…' : '刷新风格权重' }}</button>
+          </div>
+        </div>
+        <div v-if="weightsError" class="bt-error">{{ weightsError }}</div>
+        <div v-if="Object.keys(weights).length" class="weight-chips">
+          <span v-for="(value, key) in weights" :key="key" class="weight-chip">{{ key }} {{ value.toFixed(2) }}</span>
         </div>
         <div v-if="perfError" class="bt-error">{{ perfError }}</div>
         <template v-if="perf">
@@ -228,6 +266,9 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
 .bt-perf { margin-top: 20px; }
 .bt-perf-head { display: flex; align-items: center; justify-content: space-between; }
 .bt-perf-head h3 { margin: 0; font-size: 14px; }
+.bt-perf-actions { display: flex; gap: 8px; }
+.weight-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.weight-chip { padding: 3px 8px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text-2); font-size: 11px; }
 .perf-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
 .perf-table th, .perf-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
 .perf-table th:first-child, .perf-table td:first-child { text-align: left; }
