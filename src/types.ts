@@ -1110,11 +1110,23 @@ export interface RecommendationRecord {
   industry?: string
 }
 
+export interface MarketTemperature {
+  avgChangePct: number
+  upCount: number
+  downCount: number
+  limitUpCount: number
+  limitDownCount: number
+  totalAmountYi: number
+  riskOff: boolean
+  riskOn: boolean
+}
+
 export interface RecommendationListResponse {
   generatedAt: number
   total: number
   items: RecommendationRecord[]
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
+  market?: MarketTemperature
 }
 
 export interface RecommendationOutcome {

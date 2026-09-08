@@ -49,11 +49,53 @@ export interface RecommendationRecord {
   industry?: string
 }
 
+export interface MarketTemperature {
+  avgChangePct: number
+  upCount: number
+  downCount: number
+  limitUpCount: number
+  limitDownCount: number
+  totalAmountYi: number
+  riskOff: boolean
+  riskOn: boolean
+}
+
 export interface RecommendationListResponse {
   generatedAt: number
   total: number
   items: RecommendationRecord[]
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
+  market?: MarketTemperature
+}
+
+function computeMarketTemperature(stocks: SnapshotStock[]): MarketTemperature {
+  let up = 0
+  let down = 0
+  let limitUp = 0
+  let limitDown = 0
+  let changeSum = 0
+  let amountSum = 0
+  for (const stock of stocks) {
+    if (stock.changePct > 0) up += 1
+    else if (stock.changePct < 0) down += 1
+    if (stock.changePct >= 9.8) limitUp += 1
+    if (stock.changePct <= -9.8) limitDown += 1
+    changeSum += stock.changePct
+    amountSum += stock.amount
+  }
+  const avgChangePct = stocks.length ? changeSum / stocks.length : 0
+  const riskOff = avgChangePct < -1.2 || down > up * 1.4 || limitUp < 20
+  const riskOn = avgChangePct > 1.2 && up > down * 1.2
+  return {
+    avgChangePct,
+    upCount: up,
+    downCount: down,
+    limitUpCount: limitUp,
+    limitDownCount: limitDown,
+    totalAmountYi: amountSum / 1e12,
+    riskOff,
+    riskOn,
+  }
 }
 
 const STYLE_KEYS: RecommendationStyle[] = ['trend', 'limit_up', 'pullback', 'leader', 'event', 'fund', 'opinion']
@@ -345,10 +387,22 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
         return diff >= coolingDays
       })
     : [...byCode.values()]
+  const market = computeMarketTemperature(stocks)
   const weights = getRecommendationWeights()
+  const styleWeights = { ...weights }
+  if (market.riskOff) {
+    styleWeights.trend *= 0.75
+    styleWeights.limit_up *= 0.7
+    styleWeights.leader *= 0.8
+  }
+  if (market.riskOn) {
+    styleWeights.trend *= 1.08
+    styleWeights.limit_up *= 1.1
+    styleWeights.leader *= 1.08
+  }
   const rawItems = eligible.sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
   const items = rawItems.map((item) => {
-    const weight = weights[item.style] ?? 1
+    const weight = styleWeights[item.style] ?? 1
     return {
       ...item,
       score: Math.max(0, Math.min(100, Math.round(item.score * weight))),
@@ -391,5 +445,6 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     total: top.length,
     items: top,
     grouped,
+    market,
   }
 }

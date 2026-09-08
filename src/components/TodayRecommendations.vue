@@ -75,6 +75,16 @@ onMounted(() => void load())
     <div v-if="loading" class="today-state">正在聚合今日推荐…</div>
     <div v-else-if="error" class="today-state down">{{ error }}</div>
 
+    <div v-if="data?.market" class="market-temp">
+      <span class="temp-item">上涨 <b class="up">{{ data.market.upCount }}</b></span>
+      <span class="temp-item">下跌 <b class="down">{{ data.market.downCount }}</b></span>
+      <span class="temp-item">涨停 <b class="up">{{ data.market.limitUpCount }}</b></span>
+      <span class="temp-item">跌停 <b class="down">{{ data.market.limitDownCount }}</b></span>
+      <span class="temp-item">平均 <b :class="data.market.avgChangePct >= 0 ? 'up' : 'down'">{{ data.market.avgChangePct >= 0 ? '+' : '' }}{{ data.market.avgChangePct.toFixed(2) }}%</b></span>
+      <span class="temp-item">成交 <b>{{ data.market.totalAmountYi.toFixed(2) }}万亿</b></span>
+      <span class="temp-state" :class="data.market.riskOff ? 'down' : data.market.riskOn ? 'up' : ''">{{ data.market.riskOff ? '风险偏好低' : data.market.riskOn ? '风险偏好高' : '中性' }}</span>
+    </div>
+
     <div v-else-if="data" class="today-body">
       <section v-for="style in STYLE_ORDER" :key="style" class="today-section">
         <div class="section-head">
@@ -125,6 +135,20 @@ onMounted(() => void load())
   flex-direction: column;
   background: var(--bg);
 }
+.market-temp {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 12px;
+  color: var(--text-3);
+}
+.temp-item b { margin-left: 3px; }
+.temp-state { margin-left: auto; padding: 2px 8px; border-radius: 10px; background: var(--panel-2); }
+.temp-state.up { color: var(--up); background: rgba(239,35,42,.06); }
+.temp-state.down { color: var(--down); background: rgba(20,177,67,.06); }
 .today-head {
   display: flex;
   align-items: center;
