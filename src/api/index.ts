@@ -34,6 +34,7 @@ import type {
   StrategyProgress,
   Quote,
   RecommendationListResponse,
+  RecommendationPerformanceStats,
   StyleBacktestResult,
   ResearchDossier,
   ResearchRecord,
@@ -758,6 +759,15 @@ export async function fetchJin10Calendar(): Promise<{
     throw new Error(err?.error ?? `jin10 calendar http ${res.status}`)
   }
   return (await res.json()) as { items: Array<Record<string, unknown>>; provider: string }
+}
+
+export async function fetchRecommendationPerformance(): Promise<RecommendationPerformanceStats> {
+  const res = await fetch('/api/recommendations/performance')
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `recommendation performance http ${res.status}`)
+  }
+  return (await res.json()) as RecommendationPerformanceStats
 }
 
 export async function fetchRecommendations(): Promise<RecommendationListResponse> {

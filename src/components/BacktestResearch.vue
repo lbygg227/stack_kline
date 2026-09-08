@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { runStyleBacktest } from '../api'
-import type { BacktestableStyle, StyleBacktestResult } from '../types'
+import { computed, onMounted, ref } from 'vue'
+import { fetchRecommendationPerformance, runStyleBacktest } from '../api'
+import type { BacktestableStyle, RecommendationPerformanceStats, StyleBacktestResult } from '../types'
 import { useMarket } from '../composables/useMarket'
 
 const { watchlist } = useMarket()
@@ -15,6 +15,9 @@ const benchmarkCode = ref('sh000300')
 const loading = ref(false)
 const error = ref('')
 const result = ref<StyleBacktestResult | null>(null)
+const perf = ref<RecommendationPerformanceStats | null>(null)
+const perfLoading = ref(false)
+const perfError = ref('')
 
 const codes = computed(() => {
   const seed = codesText.value.trim() || watchlist.value.map((s) => s.code).join(' ')
@@ -44,6 +47,20 @@ async function run() {
 function fillWatchlist() {
   codesText.value = watchlist.value.map((s) => s.code).join(' ')
 }
+
+async function loadPerformance() {
+  perfLoading.value = true
+  perfError.value = ''
+  try {
+    perf.value = await fetchRecommendationPerformance()
+  } catch (e) {
+    perfError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    perfLoading.value = false
+  }
+}
+
+onMounted(() => void loadPerformance())
 
 const fmtPct = (v?: number) => (v == null ? '--' : (v > 0 ? '+' : '') + v.toFixed(2) + '%')
 const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
@@ -148,6 +165,37 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
           </table>
         </section>
       </template>
+
+      <section class="bt-perf">
+        <div class="bt-perf-head">
+          <h3>推荐表现追踪</h3>
+          <button class="btn" :disabled="perfLoading" @click="loadPerformance">{{ perfLoading ? '加载中…' : '刷新表现' }}</button>
+        </div>
+        <div v-if="perfError" class="bt-error">{{ perfError }}</div>
+        <template v-if="perf">
+          <div class="bt-metrics">
+            <div class="metric"><span>推荐总数</span><b>{{ perf.totalRecords }}</b></div>
+            <div class="metric"><span>已成熟</span><b>{{ perf.matured }}</b></div>
+            <div class="metric"><span>胜率</span><b>{{ fmt(perf.winRate) }}%</b></div>
+            <div class="metric"><span>平均收益</span><b :class="perf.averageReturnPct >= 0 ? 'up' : 'down'">{{ fmtPct(perf.averageReturnPct) }}</b></div>
+          </div>
+          <table v-if="perf.outcomes.length" class="perf-table">
+            <thead><tr><th>股票</th><th>风格</th><th>信号日</th><th>收益</th><th>最大盈利</th><th>最大亏损</th><th>目标</th><th>止损</th></tr></thead>
+            <tbody>
+              <tr v-for="o in perf.outcomes.slice(0, 50)" :key="o.recommendationId">
+                <td>{{ o.name }}</td>
+                <td>{{ o.style }}</td>
+                <td>{{ o.signalDate }}</td>
+                <td :class="(o.returnPct ?? 0) >= 0 ? 'up' : 'down'">{{ fmtPct(o.returnPct) }}</td>
+                <td>{{ fmtPct(o.maxGainPct) }}</td>
+                <td>{{ fmtPct(o.maxLossPct) }}</td>
+                <td>{{ o.hitTarget ? '✓' : '—' }}</td>
+                <td>{{ o.hitStop ? '✓' : '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+      </section>
     </div>
   </div>
 </template>
@@ -177,6 +225,13 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
 .bt-trades th:first-child, .bt-trades td:first-child { text-align: left; }
 .bt-trades th { color: var(--text-3); font-weight: 600; }
 .bt-empty { padding: 20px; text-align: center; color: var(--text-3); }
+.bt-perf { margin-top: 20px; }
+.bt-perf-head { display: flex; align-items: center; justify-content: space-between; }
+.bt-perf-head h3 { margin: 0; font-size: 14px; }
+.perf-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
+.perf-table th, .perf-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.perf-table th:first-child, .perf-table td:first-child { text-align: left; }
+.perf-table th { color: var(--text-3); font-weight: 600; }
 .up { color: var(--up); }
 .down { color: var(--down); }
 

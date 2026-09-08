@@ -93,6 +93,7 @@ import { buildOpinionSignals } from './opinion-signals.ts'
 import { runOpinionBacktest } from './opinion-backtest.ts'
 import { buildTodayRecommendations } from './recommendations.ts'
 import { runStyleBacktest } from './style-backtest.ts'
+import { buildRecommendationPerformance } from './recommendation-performance.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -193,6 +194,20 @@ export function marketDataPlugin(): Plugin {
           return
         }
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        // ---- 推荐表现追踪 ----
+        if (path === '/api/recommendations/performance') {
+          try {
+            const result = await buildRecommendationPerformance((code) => getKlineWithCache(code, 'day', 2000), {
+              minAgeDays: Number(url.searchParams.get('minAgeDays')) || 3,
+              limit: Number(url.searchParams.get('limit')) || 300,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
 
         // ---- 风格回测 ----
         if (path === '/api/backtests/styles' && req.method === 'POST') {

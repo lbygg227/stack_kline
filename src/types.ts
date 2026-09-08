@@ -1117,6 +1117,35 @@ export interface RecommendationListResponse {
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
 }
 
+export interface RecommendationOutcome {
+  recommendationId: string
+  code: string
+  name: string
+  style: string
+  channels: string[]
+  signalDate: string
+  entryPrice?: number
+  exitPrice?: number
+  returnPct?: number
+  maxGainPct?: number
+  maxLossPct?: number
+  hitTarget: boolean
+  hitStop: boolean
+  invalidated: boolean
+  horizonDays: number
+}
+
+export interface RecommendationPerformanceStats {
+  generatedAt: number
+  totalRecords: number
+  matured: number
+  skipped: number
+  winRate: number
+  averageReturnPct: number
+  byStyle: Record<string, { count: number; winRate: number; averageReturnPct: number }>
+  outcomes: RecommendationOutcome[]
+}
+
 export interface BacktestMetricRecord {
   strategyId: string
   style: string

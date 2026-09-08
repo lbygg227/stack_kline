@@ -57,6 +57,7 @@ export interface RecommendationListResponse {
 
 const STYLE_KEYS: RecommendationStyle[] = ['trend', 'limit_up', 'pullback', 'leader', 'event', 'fund', 'opinion']
 const HISTORY_FILE = 'recommendation-history.json'
+const RECORD_FILE = 'recommendation-records.json'
 
 type RecommendationHistory = {
   version: 1
@@ -71,6 +72,30 @@ function loadHistory(): RecommendationHistory {
 
 function saveHistory(history: RecommendationHistory): void {
   writeJson(HISTORY_FILE, history)
+}
+
+type RecommendationRecordStore = {
+  version: 1
+  records: RecommendationRecord[]
+}
+
+function loadRecords(): RecommendationRecordStore {
+  const raw = readJson<RecommendationRecordStore>(RECORD_FILE)
+  if (!raw || raw.version !== 1 || !Array.isArray(raw.records)) return { version: 1, records: [] }
+  return raw
+}
+
+function saveRecommendationRecords(records: RecommendationRecord[]): void {
+  const prev = loadRecords().records
+  const map = new Map<string, RecommendationRecord>()
+  for (const record of prev) map.set(record.code + ':' + record.signalDate, record)
+  for (const record of records) {
+    const key = record.code + ':' + record.signalDate
+    const old = map.get(key)
+    if (!old || record.score > old.score) map.set(key, record)
+  }
+  const merged = [...map.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 2000)
+  writeJson(RECORD_FILE, { version: 1, records: merged } satisfies RecommendationRecordStore)
 }
 const STYLE_LABEL: Record<RecommendationStyle, string> = {
   trend: '趋势',
@@ -349,6 +374,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     history.lastRecommended[item.code] = signalDate
   }
   saveHistory(history)
+  saveRecommendationRecords(top)
 
   return {
     generatedAt: Date.now(),
