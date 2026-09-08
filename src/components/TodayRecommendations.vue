@@ -85,7 +85,7 @@ onMounted(() => void load())
       <span class="temp-state" :class="data.market.riskOff ? 'down' : data.market.riskOn ? 'up' : ''">{{ data.market.riskOff ? '风险偏好低' : data.market.riskOn ? '风险偏好高' : '中性' }}</span>
     </div>
 
-    <div v-else-if="data" class="today-body">
+    <div v-if="data" class="today-body">
       <section v-for="style in STYLE_ORDER" :key="style" class="today-section">
         <div class="section-head">
           <h3>{{ STYLE_LABEL[style] }}</h3>
