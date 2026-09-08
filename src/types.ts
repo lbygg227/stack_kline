@@ -1031,6 +1031,8 @@ export interface DragonTigerRecoItem {
   limitReason?: string
   concepts: string[]
   reason: string
+  occurrences?: number
+  tradeDates?: string[]
 }
 
 export interface DragonTigerRecoResponse {

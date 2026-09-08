@@ -56,6 +56,8 @@ export interface DragonTigerRecoItem {
   limitReason?: string
   concepts: string[]
   reason: string
+  occurrences?: number
+  tradeDates?: string[]
 }
 
 export interface DragonTigerRecoOptions {
@@ -110,15 +112,6 @@ export function preferTodayDragonTigerDate(now = new Date()): string | undefined
 
 function num(v: number | null | undefined): number {
   return typeof v === 'number' && Number.isFinite(v) ? v : 0
-}
-
-function primaryMetric(
-  entry: Pick<DragonTigerCacheEntry, 'netValue' | 'orgNetValue' | 'hotMoneyNetValue'>,
-  prefer: 'net' | 'org' | 'hot',
-): number {
-  if (prefer === 'org' && entry.orgNetValue != null) return entry.orgNetValue
-  if (prefer === 'hot' && entry.hotMoneyNetValue != null) return entry.hotMoneyNetValue
-  return entry.netValue
 }
 
 export function scoreDragonTiger(input: {
@@ -177,43 +170,64 @@ export function aggregateDragonTigerReco(
     options.prefer ??
     (options.boardType === 'org' ? 'org' : options.boardType === 'hot_money' ? 'hot' : 'net')
 
-  const items: DragonTigerRecoItem[] = []
+  const groups = new Map<string, DragonTigerCacheEntry[]>()
   for (const entry of entries) {
-    if (options.boardType && entry.boardType !== options.boardType && entry.boardType !== 'all') {
-      /* 缓存按单次 board 刷新；过滤由 prefer 处理 */
-    }
-    const primary = primaryMetric(entry, prefer)
+    const code = normalizeCode(entry.code)
+    const list = groups.get(code) ?? []
+    list.push(entry)
+    groups.set(code, list)
+  }
+
+  const items: DragonTigerRecoItem[] = []
+  for (const [code, list] of groups) {
+    const sorted = [...list].sort((a, b) => b.tradeDate.localeCompare(a.tradeDate))
+    const latest = sorted[0]
+    const occurrences = sorted.length
+    const tradeDates = [...new Set(sorted.map((entry) => entry.tradeDate))].sort().reverse()
+    const netValue = sorted.reduce((sum, entry) => sum + entry.netValue, 0)
+    const orgValues = sorted.map((entry) => entry.orgNetValue).filter((v): v is number => v != null)
+    const hotValues = sorted.map((entry) => entry.hotMoneyNetValue).filter((v): v is number => v != null)
+    const orgNetValue = orgValues.length ? orgValues.reduce((sum, v) => sum + v, 0) : null
+    const hotMoneyNetValue = hotValues.length ? hotValues.reduce((sum, v) => sum + v, 0) : null
+    const primary = prefer === 'org' && orgNetValue != null
+      ? orgNetValue
+      : prefer === 'hot' && hotMoneyNetValue != null
+        ? hotMoneyNetValue
+        : netValue
     if (primary < minNet) continue
-    const changePct = entry.change == null ? null : entry.change * 100
+    const changePct = latest.change == null ? null : latest.change * 100
     if (excludeDown != null && changePct != null && changePct < excludeDown) continue
 
     const score = scoreDragonTiger({
       primary,
-      orgNet: entry.orgNetValue,
-      hotNet: entry.hotMoneyNetValue,
+      orgNet: orgNetValue,
+      hotNet: hotMoneyNetValue,
     })
     const tag =
       prefer === 'org' ? '机构净买' : prefer === 'hot' ? '游资净买' : '龙虎净买'
     const reasonParts = [
-      `${entry.tradeDate} ${tag} ${formatYi(primary)}`,
-      entry.limitReason,
-      entry.concepts[0],
+      occurrences > 1 ? '近' + tradeDates.length + '日上榜' + occurrences + '次' : undefined,
+      latest.tradeDate + ' ' + tag + ' ' + formatYi(primary),
+      latest.limitReason,
+      latest.concepts[0],
     ].filter(Boolean)
 
     items.push({
-      code: normalizeCode(entry.code),
-      name: entry.name,
-      industry: entry.industry,
+      code,
+      name: latest.name,
+      industry: latest.industry,
       score,
-      tradeDate: entry.tradeDate,
-      boardType: entry.boardType,
-      netValue: entry.netValue,
-      orgNetValue: entry.orgNetValue,
-      hotMoneyNetValue: entry.hotMoneyNetValue,
+      tradeDate: latest.tradeDate,
+      boardType: latest.boardType,
+      netValue,
+      orgNetValue,
+      hotMoneyNetValue,
       changePct,
-      limitReason: entry.limitReason,
-      concepts: entry.concepts,
+      limitReason: latest.limitReason,
+      concepts: latest.concepts,
       reason: reasonParts.join(' · '),
+      occurrences,
+      tradeDates,
     })
   }
 
@@ -243,7 +257,7 @@ export function buildDragonTigerReco(options: DragonTigerRecoOptions = {}): {
     tradeDate: store.tradeDate,
     boardType: store.boardType,
     lastRefreshAt: store.lastRefreshAt,
-    poolSize: store.entries.length,
+    poolSize: new Set(store.entries.map((entry) => normalizeCode(entry.code))).size,
     configured: hasFuyao(),
   }
 }
@@ -296,6 +310,11 @@ export async function refreshDragonTigerRank(options: {
   }
 
   const updatedAt = Date.now()
+  const prev = loadStore()
+  const previousDays = prev.entries.filter((entry) => entry.tradeDate !== result.tradeDate)
+  const merged = [...entries, ...previousDays]
+  const keepDates = [...new Set(merged.map((entry) => entry.tradeDate))].sort().reverse().slice(0, 5)
+  const recent = merged.filter((entry) => keepDates.includes(entry.tradeDate))
   saveStore({
     version: 1,
     updatedAt,
@@ -303,13 +322,13 @@ export async function refreshDragonTigerRank(options: {
     lastError: undefined,
     tradeDate: result.tradeDate,
     boardType: result.boardType,
-    entries,
+    entries: recent,
   })
   return {
     refreshed: entries.length,
     tradeDate: result.tradeDate,
     boardType: result.boardType,
-    poolSize: entries.length,
+    poolSize: recent.length,
     updatedAt,
   }
 }
@@ -326,7 +345,7 @@ export function dragonTigerRankStatus(): {
   const store = loadStore()
   return {
     configured: hasFuyao(),
-    poolSize: store.entries.length,
+    poolSize: new Set(store.entries.map((entry) => normalizeCode(entry.code))).size,
     tradeDate: store.tradeDate,
     boardType: store.boardType,
     lastRefreshAt: store.lastRefreshAt,
