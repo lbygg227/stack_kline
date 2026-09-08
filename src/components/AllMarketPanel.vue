@@ -3,10 +3,23 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 import type { SnapshotStock } from '../types'
 import { fetchSnapshot } from '../api'
 import { useMarket } from '../composables/useMarket'
+import { useResearch } from '../composables/useResearch'
 import { usePullRefresh } from '../composables/usePullRefresh'
 import { SW1_INDUSTRIES } from '../data/stocks'
 
-const { selectStock, isMobile } = useMarket()
+const { isMobile, addToWatchlist, isInWatchlist, selectStock, setView, setMobileTab } = useMarket()
+const { openCandidate, seedScreener } = useResearch()
+
+function goWatch(s: { code: string; name: string }) {
+  selectStock(s.code, s.name)
+  if (isMobile.value) setMobileTab('market')
+  else setView('market')
+}
+
+function starStock(e: Event, code: string, name: string) {
+  e.stopPropagation()
+  addToWatchlist(code, name)
+}
 const { distance: ptrDistance, refreshing: ptrRefreshing, onTouchStart: ptrStart, onTouchMove: ptrMove, onTouchEnd: ptrEnd } = usePullRefresh(() => loadSnapshot(true))
 
 const stocks = ref<SnapshotStock[]>([])
@@ -213,6 +226,13 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
 
     <div class="am-toolbar">
       <input v-model="kw" type="text" placeholder="过滤名称/代码" class="am-search" />
+      <button
+        v-if="industryFilter"
+        class="btn"
+        @click="seedScreener({ industry: industryFilter, note: `来自全市场行业：${industryFilter}` })"
+      >
+        用此行业选股
+      </button>
       <template v-if="isMobile">
         <button class="btn" @click="sheetMode = 'industry'">行业{{ industryFilter ? '：' + industryFilter : '' }}</button>
         <button class="btn" @click="sheetMode = 'focus'">聚焦{{ focusTag ? '：' + (FOCUS_TAGS.find((t) => t.key === focusTag)?.label ?? '') : '' }}</button>
@@ -294,10 +314,12 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
     </Transition>
 
     <div class="am-grid-head">
+      <span></span>
       <span>名称 / 代码</span>
       <span class="num">现价</span>
       <span class="num">涨跌幅</span>
       <span class="num">成交额</span>
+      <span></span>
     </div>
 
     <div v-if="status === 'fetching'" class="am-status">
@@ -319,12 +341,20 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
       <div class="ptr" :class="{ refreshing: ptrRefreshing }" :style="{ height: ptrDistance + 'px' }">
         {{ ptrRefreshing ? '刷新中…' : ptrDistance >= 55 ? '释放刷新' : '下拉刷新' }}
       </div>
-      <button
+      <div
         v-for="s in visible"
         :key="s.code"
         class="am-item"
-        @click="selectStock(s.code, s.name)"
+        @click="goWatch(s)"
       >
+        <button
+          class="am-star"
+          :class="{ on: isInWatchlist(s.code) }"
+          :title="isInWatchlist(s.code) ? '已在自选' : '加入自选'"
+          @click="starStock($event, s.code, s.name)"
+        >
+          {{ isInWatchlist(s.code) ? '★' : '☆' }}
+        </button>
         <span class="am-name">
           {{ s.name }}
           <span class="am-code num">{{ s.code.toUpperCase() }} · {{ s.industry ?? '其他' }}</span>
@@ -340,7 +370,14 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
           <span class="am-metric">PB <b>{{ fmtPb(s.pb) }}</b></span>
           <span v-for="tag in rowTags(s)" :key="tag" class="am-tag">{{ tag }}</span>
         </span>
-      </button>
+        <button
+          class="am-research"
+          title="送入研究观察"
+          @click.stop="openCandidate(s.code, { name: s.name, industry: s.industry, source: 'industry', context: { industry: s.industry, reason: `全市场 · ${s.industry ?? '未知行业'}` } })"
+        >
+          研
+        </button>
+      </div>
       <div class="am-end num">
         {{ visible.length }}/{{ sorted.length }} 条
         <template v-if="visible.length < sorted.length">（继续滚动加载）</template>
@@ -479,7 +516,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
 .am-grid-head,
 .am-item {
   display: grid;
-  grid-template-columns: 1.3fr 72px 78px 90px;
+  grid-template-columns: 28px 1.3fr 72px 78px 90px 32px;
   gap: 8px;
   align-items: center;
 }
@@ -521,6 +558,30 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
 }
 .am-item:hover {
   background: rgba(30, 111, 255, 0.05);
+}
+.am-star,
+.am-research {
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+.am-star.on {
+  color: #d99000;
+}
+.am-research {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+.am-research:hover {
+  border-color: var(--primary);
 }
 .am-name {
   display: flex;
@@ -689,8 +750,11 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
 
   .am-grid-head,
   .am-item {
-    grid-template-columns: 1fr 56px 62px 58px;
+    grid-template-columns: 24px 1fr 56px 62px 32px;
     gap: 4px;
+  }
+  .am-amount {
+    display: none;
   }
   .am-item {
     padding: 10px 10px;

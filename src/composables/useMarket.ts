@@ -2,10 +2,10 @@ import { reactive, ref } from 'vue'
 import type { Quote, StockInfo } from '../types'
 import { DEFAULT_WATCHLIST, INDEX_LIST, stockNameOf } from '../data/stocks'
 import { fetchQuotes } from '../api'
-import { loadWatchlist, removeFromWatchlist as removeWatch, removeFromWatchlistMany as removeWatchMany, saveWatchlist } from '../data/watchlist'
+import { loadWatchlist, removeFromWatchlist as removeWatch, removeFromWatchlistMany as removeWatchMany, saveWatchlist, addToWatchlist as addWatch } from '../data/watchlist'
 
-export type DesktopView = 'market' | 'all-market' | 'strategy' | 'opinion' | 'data'
-export type MobileTab = 'market' | 'watchlist' | 'all' | 'strategy' | 'opinion' | 'trade' | 'data'
+export type DesktopView = 'market' | 'all-market' | 'events' | 'strategy' | 'opinion' | 'data'
+export type MobileTab = 'market' | 'watchlist' | 'all' | 'events' | 'strategy' | 'opinion' | 'trade' | 'data'
 
 interface MarketState {
   currentCode: string
@@ -94,6 +94,27 @@ export function selectStock(code: string, name?: string) {
   void refreshQuotes()
 }
 
+export function addToWatchlist(code: string, name?: string) {
+  const next = addWatch(watchlist.value, code, name)
+  if (next === watchlist.value) return false
+  watchlist.value = next
+  void refreshQuotes()
+  return true
+}
+
+export function toggleWatchlist(code: string, name?: string) {
+  if (watchlist.value.some((s) => s.code === code)) {
+    removeFromWatchlist(code)
+    return false
+  }
+  addToWatchlist(code, name)
+  return true
+}
+
+export function isInWatchlist(code: string): boolean {
+  return watchlist.value.some((s) => s.code === code)
+}
+
 export function removeFromWatchlist(code: string) {
   watchlist.value = removeWatch(watchlist.value, code)
   void refreshQuotes()
@@ -129,6 +150,7 @@ export function setMobileTab(tab: MobileTab) {
   else if (tab === 'opinion') state.view = 'opinion'
   else if (tab === 'data') state.view = 'data'
   else if (tab === 'all') state.view = 'all-market'
+  else if (tab === 'events') state.view = 'events'
   else state.view = 'market'
 }
 
@@ -145,6 +167,9 @@ export function useMarket() {
     watchlist,
     refreshQuotes,
     selectStock,
+    addToWatchlist,
+    toggleWatchlist,
+    isInWatchlist,
     removeFromWatchlist,
     removeFromWatchlistMany,
     resetWatchlist,
@@ -157,4 +182,4 @@ export function useMarket() {
   }
 }
 
-export { INDEX_LIST }
+export { INDEX_LIST, state, isMobile, mobileTab, watchlist }

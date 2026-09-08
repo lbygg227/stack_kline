@@ -191,7 +191,13 @@ onMounted(load)
           <h3>证据时间线</h3>
           <article v-for="event in dossier?.timeline" :key="event.id" class="rd-event">
             <time>{{ formatTime(event.timestamp) }}</time>
-            <b>{{ event.type === 'opinion' ? `观点 · ${event.author}` : `研究版本 v${event.version}` }}</b>
+            <b>{{
+              event.type === 'opinion'
+                ? `观点 · ${event.author}`
+                : event.type === 'event'
+                  ? `资讯 · ${event.eventKind === 'announcement' ? '公告' : event.eventKind === 'regulatory' ? '监管' : '新闻'}`
+                  : `研究版本 v${event.version}`
+            }}</b>
             <p>{{ event.summary }}</p>
             <a v-if="event.sourceUrl" :href="event.sourceUrl" target="_blank" rel="noreferrer">查看原文</a>
           </article>

@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { fetchBatchAnalysis } from '../api'
 import type { BatchAnalysisItem } from '../types'
+import { useResearch } from '../composables/useResearch'
 
 const emit = defineEmits<{ close: [] }>()
+const { candidates, openCandidate } = useResearch()
 
 const input = ref('')
 const withNews = ref(true)
@@ -12,6 +14,24 @@ const running = ref(false)
 const error = ref('')
 const items = ref<BatchAnalysisItem[]>([])
 const provider = ref('')
+
+onMounted(() => {
+  if (!input.value.trim() && candidates.value.length) {
+    input.value = candidates.value
+      .filter((c) => c.status !== 'reject')
+      .map((c) => c.code)
+      .slice(0, 40)
+      .join(' ')
+  }
+})
+
+function fillFromQueue() {
+  input.value = candidates.value
+    .filter((c) => c.status !== 'reject')
+    .map((c) => c.code)
+    .slice(0, 40)
+    .join(' ')
+}
 
 const normalizeCode = (raw: string): string | null => {
   const v = raw.trim().toLowerCase()
@@ -87,6 +107,7 @@ const fmt = (n: number | undefined, digits = 2) => (n === undefined ? '--' : n.t
               <input v-model="withAi" type="checkbox" />
               AI 简报（较慢）
             </label>
+            <button class="btn" type="button" @click="fillFromQueue">填入观察队列</button>
             <button class="ba-run" :disabled="running" @click="run">
               {{ running ? '分析中…' : '开始分析' }}
             </button>
@@ -96,7 +117,7 @@ const fmt = (n: number | undefined, digits = 2) => (n === undefined ? '--' : n.t
         </div>
 
         <div v-if="items.length" class="ba-list">
-          <div v-for="it in items" :key="it.code" class="ba-item">
+          <div v-for="it in items" :key="it.code" class="ba-item" @click="openCandidate(it.code, { name: it.name, source: 'strategy', context: { reason: it.summary } })">
             <div class="ba-item-head">
               <span class="ba-name">{{ it.name }}</span>
               <span class="num ba-code">{{ it.code.toUpperCase() }}</span>

@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { runFusionScreen } from '../api'
-import type { FusionResult, OpinionPlatform, StrategyConditions } from '../types'
-import { useMarket } from '../composables/useMarket'
+import { computed, onBeforeUnmount, ref } from 'vue'
+import { getStrategyProgress, runFusionScreen } from '../api'
+import type { FusionResult, OpinionPlatform, StrategyConditions, StrategyProgress } from '../types'
+import { useResearch } from '../composables/useResearch'
 
 const props = defineProps<{ conditions: StrategyConditions }>()
 const emit = defineEmits<{ close: [] }>()
-const { selectStock, setView, setMobileTab, isMobile } = useMarket()
+const { openCandidate } = useResearch()
 
 const platform = ref<OpinionPlatform | ''>('')
 const opinionRequired = ref(false)
@@ -17,11 +17,41 @@ const running = ref(false)
 const error = ref('')
 const results = ref<FusionResult[]>([])
 const counts = ref({ technical: 0, opinion: 0 })
+const progress = ref<StrategyProgress>({
+  running: false,
+  phase: 'idle',
+  done: 0,
+  total: 0,
+  hits: 0,
+  message: '',
+})
+let progressTimer: number | undefined
+const progressPct = computed(() =>
+  progress.value.total > 0 ? Math.min(100, Math.round((progress.value.done / progress.value.total) * 100)) : 8,
+)
+
+function startProgressPoll() {
+  stopProgressPoll()
+  progress.value = { running: true, phase: 'preparing', done: 0, total: 0, hits: 0, message: '正在准备…' }
+  progressTimer = window.setInterval(async () => {
+    try { progress.value = await getStrategyProgress() } catch { /* ignore */ }
+  }, 400)
+}
+
+function stopProgressPoll() {
+  if (progressTimer !== undefined) {
+    window.clearInterval(progressTimer)
+    progressTimer = undefined
+  }
+}
+
+onBeforeUnmount(() => stopProgressPoll())
 
 async function run() {
   running.value = true
   error.value = ''
   results.value = []
+  startProgressPoll()
   try {
     const response = await runFusionScreen(props.conditions, {
       platform: platform.value || undefined,
@@ -35,15 +65,25 @@ async function run() {
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
+    stopProgressPoll()
+    try { progress.value = await getStrategyProgress() } catch { /* ignore */ }
     running.value = false
   }
 }
 
-function openStock(result: FusionResult) {
-  selectStock(result.code, result.name)
+async function openStock(result: FusionResult) {
+  await openCandidate(result.code, {
+    name: result.name,
+    source: 'fusion',
+    context: {
+      reason: result.reasons.join('；') || result.recommendation,
+      strategies: result.strategies,
+      fusionScore: result.fusionScore,
+      recommendation: result.recommendation,
+      authors: result.authors,
+    },
+  })
   emit('close')
-  if (isMobile.value) setMobileTab('market')
-  else setView('market')
 }
 
 const recommendation = (value: FusionResult['recommendation']) =>
@@ -66,6 +106,15 @@ const fmt = (value: number | undefined) => value === undefined ? '--' : `${value
         <label class="fp-check"><input v-model="opinionRequired" type="checkbox" /> 必须存在达到门槛的看多观点</label>
         <button class="btn fp-primary" :disabled="running" @click="run">{{ running ? '融合计算中…' : '运行融合选股' }}</button>
       </section>
+      <div v-if="running" class="fp-progress">
+        <div class="fp-progress-head">
+          <span>{{ progress.message || '融合计算中…' }}</span>
+          <span class="num" v-if="progress.total > 0">{{ progressPct }}%</span>
+        </div>
+        <div class="fp-progress-track">
+          <div class="fp-progress-bar" :style="{ width: (progress.total > 0 ? progressPct : 20) + '%' }"></div>
+        </div>
+      </div>
       <div v-if="error" class="fp-error">{{ error }}</div>
       <div v-if="results.length || counts.technical" class="fp-summary">
         技术候选 {{ counts.technical }} 只 · 有效观点信号 {{ counts.opinion }} 只 · 融合输出 {{ results.length }} 只
@@ -92,5 +141,5 @@ const fmt = (value: number | undefined) => value === undefined ? '--' : `${value
 </template>
 
 <style scoped>
-.fp-mask{position:fixed;inset:0;z-index:295;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.5)}.fp-panel{width:min(1000px,100%);max-height:94vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:10px}header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--panel-2);border-bottom:1px solid var(--border)}h2{margin:0;font-size:16px}header p{margin:2px 0 0;color:var(--text-3);font-size:10px}.fp-config{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;align-items:end;padding:14px;border-bottom:1px solid var(--border)}.fp-config label{display:flex;flex-direction:column;gap:4px;color:var(--text-3);font-size:10px}.fp-config input,.fp-config select{min-width:0;padding:7px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text-1)}.fp-check{flex-direction:row!important;align-items:center}.fp-check input{width:auto}.fp-primary{background:var(--primary);border-color:var(--primary);color:#fff}.fp-error,.fp-summary{margin:10px 14px 0;font-size:11px}.fp-error{color:var(--down)}.fp-summary{color:var(--text-3)}.fp-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:14px}.fp-card{padding:11px;border:1px solid var(--border);border-radius:6px;background:var(--panel-2);cursor:pointer}.fp-card:hover{border-color:var(--primary)}.fp-top{display:flex;justify-content:space-between}.fp-top small{display:block;color:var(--text-3);font-weight:400}.rec-recommend{color:var(--up)}.rec-observe{color:#d99000}.rec-avoid{color:var(--down)}.fp-scores{display:flex;gap:12px;margin:8px 0;font-size:11px}.fp-card p,.fp-muted,.fp-risk{margin:5px 0;font-size:10px;line-height:1.5}.fp-muted{color:var(--text-3)}.fp-risk{color:#d99000}.fp-empty{grid-column:1/-1;padding:30px;text-align:center;color:var(--text-3)}@media(max-width:820px){.fp-mask{padding:0;align-items:flex-end}.fp-panel{max-height:96vh;border-radius:12px 12px 0 0}.fp-config{grid-template-columns:repeat(2,1fr)}.fp-results{grid-template-columns:1fr}}
+.fp-mask{position:fixed;inset:0;z-index:295;display:flex;align-items:center;justify-content:center;padding:24px;background:rgba(0,0,0,.5)}.fp-panel{width:min(1000px,100%);max-height:94vh;overflow:auto;background:var(--panel);border:1px solid var(--border);border-radius:10px}header{position:sticky;top:0;z-index:2;display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--panel-2);border-bottom:1px solid var(--border)}h2{margin:0;font-size:16px}header p{margin:2px 0 0;color:var(--text-3);font-size:10px}.fp-config{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;align-items:end;padding:14px;border-bottom:1px solid var(--border)}.fp-config label{display:flex;flex-direction:column;gap:4px;color:var(--text-3);font-size:10px}.fp-config input,.fp-config select{min-width:0;padding:7px;border:1px solid var(--border);border-radius:4px;background:var(--panel);color:var(--text-1)}.fp-check{flex-direction:row!important;align-items:center}.fp-check input{width:auto}.fp-primary{background:var(--primary);border-color:var(--primary);color:#fff}.fp-error,.fp-summary{margin:10px 14px 0;font-size:11px}.fp-error{color:var(--down)}.fp-summary{color:var(--text-3)}.fp-results{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:14px}.fp-card{padding:11px;border:1px solid var(--border);border-radius:6px;background:var(--panel-2);cursor:pointer}.fp-card:hover{border-color:var(--primary)}.fp-top{display:flex;justify-content:space-between}.fp-top small{display:block;color:var(--text-3);font-weight:400}.rec-recommend{color:var(--up)}.rec-observe{color:#d99000}.rec-avoid{color:var(--down)}.fp-scores{display:flex;gap:12px;margin:8px 0;font-size:11px}.fp-card p,.fp-muted,.fp-risk{margin:5px 0;font-size:10px;line-height:1.5}.fp-muted{color:var(--text-3)}.fp-risk{color:#d99000}.fp-empty{grid-column:1/-1;padding:30px;text-align:center;color:var(--text-3)}.fp-progress{margin:10px 14px 0;padding:10px 12px;border:1px solid var(--border);border-radius:6px;background:var(--panel-2)}.fp-progress-head{display:flex;justify-content:space-between;font-size:12px;font-weight:600}.fp-progress-track{height:6px;margin-top:8px;border-radius:999px;background:#e8edf5;overflow:hidden}.fp-progress-bar{height:100%;background:linear-gradient(90deg,#1e6fff,#4d94ff);transition:width .25s ease}@media(max-width:820px){.fp-mask{padding:0;align-items:flex-end}.fp-panel{max-height:96vh;border-radius:12px 12px 0 0}.fp-config{grid-template-columns:repeat(2,1fr)}.fp-results{grid-template-columns:1fr}}
 </style>

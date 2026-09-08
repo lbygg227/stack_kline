@@ -110,7 +110,7 @@ function onItemClick(code: string, name: string) {
       </button>
 
       <div v-if="watchlist.length === 0" class="wl-empty">
-        暂无自选，请到「全市场」页选择股票
+        暂无自选。在行情页点「☆ 加自选」，或在全市场列表点星标加入。
       </div>
     </div>
   </aside>

@@ -3,10 +3,11 @@ import { computed, ref } from 'vue'
 import { useMarket } from '../composables/useMarket'
 import StockAnalysis from './StockAnalysis.vue'
 
-const { state } = useMarket()
+const { state, toggleWatchlist, isInWatchlist } = useMarket()
 const showAnalysis = ref(false)
 
 const q = computed(() => state.quote)
+const starred = computed(() => isInWatchlist(state.currentCode))
 
 const cls = computed(() => {
   const c = (q.value?.changePct ?? 0)
@@ -30,6 +31,10 @@ const items = computed(() => {
     { label: '市盈率', value: it.pe ? it.pe.toFixed(2) : '--' },
   ]
 })
+
+function onToggleWatch() {
+  toggleWatchlist(state.currentCode, state.currentName)
+}
 </script>
 
 <template>
@@ -38,6 +43,14 @@ const items = computed(() => {
       <div class="qh-name-row">
         <span class="qh-name">{{ state.currentName }}</span>
         <span class="qh-code num">{{ state.currentCode.toUpperCase() }}</span>
+        <button
+          class="qh-star-btn"
+          :class="{ on: starred }"
+          :title="starred ? '移出自选' : '加入自选'"
+          @click="onToggleWatch"
+        >
+          {{ starred ? '★ 已自选' : '☆ 加自选' }}
+        </button>
         <button class="qh-analysis-btn" @click="showAnalysis = true">📊 分析</button>
       </div>
       <template v-if="q">
@@ -117,6 +130,27 @@ const items = computed(() => {
 .qh-analysis-btn:hover {
   border-color: var(--primary);
   background: rgba(30, 111, 255, 0.06);
+}
+.qh-star-btn {
+  margin-left: 4px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.qh-star-btn:hover {
+  border-color: #d99000;
+  color: #d99000;
+}
+.qh-star-btn.on {
+  border-color: #d99000;
+  background: rgba(217, 144, 0, 0.1);
+  color: #d99000;
 }
 .qh-code {
   font-size: 12px;
