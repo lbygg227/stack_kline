@@ -9,19 +9,41 @@ const { openCandidate, goFullChart } = useResearch()
 const loading = ref(false)
 const error = ref('')
 const data = ref<RecommendationListResponse | null>(null)
+const selected = ref<RecommendationRecord | null>(null)
 
-const rankedItems = computed(() =>
-  [...(data.value?.items ?? [])].sort((a, b) => b.confidence - a.confidence || b.score - a.score),
-)
 const STYLE_LABEL: Record<RecommendationStyle, string> = {
   trend: '趋势',
   limit_up: '打板',
   pullback: '低吸',
   leader: '龙头',
-  event: '事件驱动',
-  fund: '资金抱团',
-  opinion: '博主共识',
+  event: '事件',
+  fund: '资金',
+  opinion: '观点',
 }
+
+const CHANNEL_LABEL: Record<string, string> = {
+  technical: '技术',
+  event: '事件',
+  opinion: '观点',
+  fund: '资金',
+  dragon: '龙虎',
+}
+
+const rankedItems = computed(() =>
+  [...(data.value?.items ?? [])].sort((a, b) => b.confidence - a.confidence || b.score - a.score),
+)
+
+const evidenceGroups = computed(() => {
+  const e = selected.value?.evidence
+  if (!e) return []
+  const groups: Array<{ key: string; label: string; items: string[] }> = []
+  if (e.technical && e.technical.length) groups.push({ key: 'technical', label: '技术面', items: e.technical })
+  if (e.event && e.event.length) groups.push({ key: 'event', label: '事件', items: e.event })
+  if (e.opinion && e.opinion.length) groups.push({ key: 'opinion', label: '观点', items: e.opinion })
+  if (e.fund && e.fund.length) groups.push({ key: 'fund', label: '资金', items: e.fund })
+  if (e.dragon && e.dragon.length) groups.push({ key: 'dragon', label: '龙虎榜', items: e.dragon })
+  return groups
+})
 
 async function load() {
   loading.value = true
@@ -35,17 +57,7 @@ async function load() {
   }
 }
 
-function firstEvidence(item: RecommendationRecord): string {
-  return [
-    ...(item.evidence.technical ?? []),
-    ...(item.evidence.event ?? []),
-    ...(item.evidence.opinion ?? []),
-    ...(item.evidence.fund ?? []),
-    ...(item.evidence.dragon ?? []),
-  ][0] ?? ''
-}
-
-async function openItem(item: RecommendationRecord) {
+async function openWorkbench(item: RecommendationRecord) {
   const channel = item.channels[0]
   const source = channel === 'technical' ? 'strategy' : channel
   await openCandidate(item.code, {
@@ -55,11 +67,14 @@ async function openItem(item: RecommendationRecord) {
     context: {
       reason: item.thesis,
       industry: item.industry,
-      note: firstEvidence(item),
+      note: item.evidence.technical?.[0] || item.evidence.event?.[0] || item.evidence.fund?.[0],
       recommendation: 'recommend',
     },
   })
 }
+
+const fmtPct = (v?: number) => (v == null ? '--' : (v > 0 ? '+' : '') + v.toFixed(2) + '%')
+const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
 
 onMounted(() => void load())
 </script>
@@ -69,7 +84,7 @@ onMounted(() => void load())
     <header class="today-head">
       <div>
         <h2>今日推荐</h2>
-        <p>技术 / 事件 / 观点 / 资金 / 龙虎榜统一聚合，点击查看入选逻辑。</p>
+        <p>按置信度排序 · 点击任意标的查看入选依据</p>
       </div>
       <button class="btn" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新推荐' }}</button>
     </header>
@@ -84,41 +99,119 @@ onMounted(() => void load())
       <span class="temp-item">跌停 <b class="down">{{ data.market.limitDownCount }}</b></span>
       <span class="temp-item">平均 <b :class="data.market.avgChangePct >= 0 ? 'up' : 'down'">{{ data.market.avgChangePct >= 0 ? '+' : '' }}{{ data.market.avgChangePct.toFixed(2) }}%</b></span>
       <span class="temp-item">成交 <b>{{ data.market.totalAmountYi.toFixed(2) }}万亿</b></span>
-      <span class="temp-state" :class="data.market.riskOff ? 'down' : data.market.riskOn ? 'up' : ''">{{ data.market.riskOff ? '风险偏好低' : data.market.riskOn ? '风险偏好高' : '中性' }}</span>
+      <span class="temp-state" :class="data.market.riskOff ? 'down' : data.market.riskOn ? 'up' : ''">
+        {{ data.market.riskOff ? '风险偏好低' : data.market.riskOn ? '风险偏好高' : '中性' }}
+      </span>
     </div>
 
-    <div v-if="data" class="today-body">
-      <div class="ranked-head">按确定性排序 · 共 {{ rankedItems.length }} 只</div>
-      <div class="card-grid">
-          <article v-for="item in rankedItems" :key="item.id" class="rec-card" @click="openItem(item)">
-            <div class="rec-card-head">
-              <div>
-                <strong>{{ item.name }}</strong>
-                <span class="num rec-code">{{ item.code.toUpperCase() }}</span>
-              </div>
-              <button class="rec-chart" title="跳转K线" @click.stop="goFullChart(item.code, item.name)">K线 ↗</button>
-            </div>
-            <div class="rec-style">{{ STYLE_LABEL[item.style] }}</div>
-
-            <div class="rec-price-row">
-              <span class="num rec-price">{{ item.price?.toFixed(2) ?? '--' }}</span>
-              <span class="num" :class="(item.changePct ?? 0) > 0 ? 'up' : (item.changePct ?? 0) < 0 ? 'down' : 'flat'">
-                {{ item.changePct != null ? (item.changePct > 0 ? '+' : '') + item.changePct.toFixed(2) + '%' : '--' }}
-              </span>
-              <span class="rec-score">置信 {{ item.confidence }}</span>
-            </div>
-
-            <p class="rec-thesis">{{ item.thesis }}</p>
-            <p class="rec-evidence">{{ firstEvidence(item) }}</p>
-
-            <div class="rec-levels">
-              <span v-if="item.levels.entry">观察 {{ item.levels.entry.toFixed(2) }}</span>
-              <span v-if="item.levels.target">目标 {{ item.levels.target.toFixed(2) }}</span>
-              <span v-if="item.levels.stopLoss">止损 {{ item.levels.stopLoss.toFixed(2) }}</span>
-              <span>周期 {{ item.horizonDays }}日</span>
-            </div>
-          </article>
+    <div v-if="data" class="today-main">
+      <div class="rec-table-wrap">
+        <table class="rec-table">
+          <thead>
+            <tr>
+              <th class="col-name">名称 / 代码</th>
+              <th>风格</th>
+              <th class="num">现价</th>
+              <th class="num">涨跌幅</th>
+              <th>置信度</th>
+              <th class="num">目标</th>
+              <th class="num">止损</th>
+              <th class="num">周期</th>
+              <th>来源</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr
+              v-for="item in rankedItems"
+              :key="item.id"
+              :class="{ active: selected?.id === item.id }"
+              @click="selected = item"
+            >
+              <td class="col-name">
+                <span class="rec-name">{{ item.name }}</span>
+                <span class="rec-code num">{{ item.code.toUpperCase() }}</span>
+              </td>
+              <td><span class="style-tag">{{ STYLE_LABEL[item.style] }}</span></td>
+              <td class="num">{{ fmt(item.price) }}</td>
+              <td class="num" :class="(item.changePct ?? 0) > 0 ? 'up' : (item.changePct ?? 0) < 0 ? 'down' : 'flat'">
+                {{ fmtPct(item.changePct) }}
+              </td>
+              <td>
+                <div class="conf">
+                  <div class="conf-track"><div class="conf-bar" :style="{ width: item.confidence + '%' }"></div></div>
+                  <span class="num">{{ item.confidence }}</span>
+                </div>
+              </td>
+              <td class="num">{{ fmt(item.levels.target) }}</td>
+              <td class="num down">{{ fmt(item.levels.stopLoss) }}</td>
+              <td class="num">{{ item.horizonDays }}日</td>
+              <td class="channels">
+                <span v-for="c in item.channels" :key="c" class="channel-tag">{{ CHANNEL_LABEL[c] ?? c }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+        <div v-if="rankedItems.length === 0" class="today-state">暂无可推荐标的</div>
       </div>
+
+      <Transition name="drawer">
+        <aside v-if="selected" class="rec-drawer">
+          <header class="drawer-head">
+            <div>
+              <div class="drawer-name">{{ selected.name }}</div>
+              <div class="drawer-code num">{{ selected.code.toUpperCase() }} · {{ selected.industry || '未分类' }}</div>
+            </div>
+            <button class="drawer-close" @click="selected = null">✕</button>
+          </header>
+
+          <div class="drawer-body">
+            <div class="drawer-badges">
+              <span class="style-tag">{{ STYLE_LABEL[selected.style] }}</span>
+              <span class="conf-tag">置信 {{ selected.confidence }}</span>
+              <span v-for="c in selected.channels" :key="c" class="channel-tag">{{ CHANNEL_LABEL[c] ?? c }}</span>
+            </div>
+
+            <p class="drawer-thesis">{{ selected.thesis }}</p>
+
+            <div class="drawer-price">
+              <span class="num price-main">{{ fmt(selected.price) }}</span>
+              <span class="num" :class="(selected.changePct ?? 0) > 0 ? 'up' : (selected.changePct ?? 0) < 0 ? 'down' : 'flat'">
+                {{ fmtPct(selected.changePct) }}
+              </span>
+            </div>
+
+            <section v-if="evidenceGroups.length" class="drawer-section">
+              <h4>入选证据</h4>
+              <div v-for="g in evidenceGroups" :key="g.key" class="evidence-group">
+                <div class="evidence-label">{{ g.label }}</div>
+                <ul>
+                  <li v-for="(line, i) in g.items" :key="i">{{ line }}</li>
+                </ul>
+              </div>
+            </section>
+
+            <section class="drawer-section">
+              <h4>关键价位</h4>
+              <div class="level-row"><span>观察</span><b class="num">{{ fmt(selected.levels.entry) }}</b></div>
+              <div class="level-row"><span>目标</span><b class="num up">{{ fmt(selected.levels.target) }}</b></div>
+              <div class="level-row"><span>止损</span><b class="num down">{{ fmt(selected.levels.stopLoss) }}</b></div>
+              <div class="level-row"><span>观察周期</span><b class="num">{{ selected.horizonDays }} 日</b></div>
+            </section>
+
+            <section v-if="selected.invalidIf.length" class="drawer-section">
+              <h4>失效条件</h4>
+              <ul class="invalid-list">
+                <li v-for="(line, i) in selected.invalidIf" :key="i">{{ line }}</li>
+              </ul>
+            </section>
+
+            <div class="drawer-actions">
+              <button class="btn primary" @click="openWorkbench(selected)">打开完整工作台</button>
+              <button class="btn" @click="goFullChart(selected.code, selected.name)">查看 K 线</button>
+            </div>
+          </div>
+        </aside>
+      </Transition>
     </div>
   </div>
 </template>
@@ -131,11 +224,23 @@ onMounted(() => void load())
   flex-direction: column;
   background: var(--bg);
 }
+.today-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px 10px;
+}
+.today-head h2 { margin: 0 0 4px; font-size: 18px; }
+.today-head p { margin: 0; font-size: 12px; color: var(--text-3); }
+.today-state { padding: 50px 20px; text-align: center; color: var(--text-3); }
+
 .market-temp {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  padding: 8px 20px;
+  gap: 8px 14px;
+  padding: 8px 18px;
+  border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   background: var(--panel);
   font-size: 12px;
@@ -145,166 +250,126 @@ onMounted(() => void load())
 .temp-state { margin-left: auto; padding: 2px 8px; border-radius: 10px; background: var(--panel-2); }
 .temp-state.up { color: var(--up); background: rgba(239,35,42,.06); }
 .temp-state.down { color: var(--down); background: rgba(20,177,67,.06); }
-.today-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 16px 20px 12px;
-}
-.today-head h2 {
-  margin: 0 0 4px;
-  font-size: 18px;
-}
-.today-head p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-3);
-}
-.today-state {
-  padding: 60px 20px;
-  text-align: center;
-  color: var(--text-3);
-}
-.today-body {
+
+.today-main {
+  position: relative;
   flex: 1;
-  overflow-y: auto;
-  padding: 0 20px 20px;
-}
-.today-section {
-  margin-bottom: 20px;
-}
-.section-head {
+  min-height: 0;
   display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 12px 0 8px;
 }
-.section-head h3 {
-  margin: 0;
-  font-size: 15px;
+.rec-table-wrap {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
 }
-.section-count {
-  padding: 1px 7px;
-  border-radius: 10px;
-  background: var(--panel-2);
-  color: var(--text-3);
-  font-size: 11px;
-}
-.section-empty {
-  padding: 14px;
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-  color: var(--text-3);
+.rec-table {
+  width: 100%;
+  border-collapse: collapse;
   font-size: 12px;
-  text-align: center;
 }
-.ranked-head {
-  margin: 12px 0 8px;
-  font-size: 13px;
+.rec-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 8px 10px;
+  text-align: left;
   font-weight: 600;
-  color: var(--text-2);
+  color: var(--text-3);
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
-  gap: 10px;
+.rec-table td {
+  padding: 7px 10px;
+  border-bottom: 1px solid #f0f1f4;
+  white-space: nowrap;
 }
-.rec-style {
+.rec-table tbody tr { cursor: pointer; }
+.rec-table tbody tr:hover { background: rgba(30,111,255,.05); }
+.rec-table tbody tr.active { background: rgba(30,111,255,.08); box-shadow: inset 3px 0 0 var(--primary); }
+.rec-table .num { text-align: right; }
+.col-name { min-width: 150px; }
+.rec-name { font-weight: 600; margin-right: 6px; }
+.rec-code { font-size: 10px; color: var(--text-3); }
+.style-tag {
   display: inline-block;
-  margin-top: 6px;
   padding: 1px 7px;
   border-radius: 10px;
-  background: rgba(30, 111, 255, 0.08);
+  background: rgba(30,111,255,.08);
   color: var(--primary);
   font-size: 10px;
   font-weight: 600;
 }
-.rec-card {
-  padding: 12px;
+.channel-tag {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 1px 6px;
+  border-radius: 9px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  color: var(--text-3);
+  font-size: 10px;
+}
+.conf { display: flex; align-items: center; gap: 6px; }
+.conf-track { width: 52px; height: 5px; border-radius: 3px; background: #e8edf5; overflow: hidden; }
+.conf-bar { height: 100%; background: linear-gradient(90deg, #1e6fff, #4d94ff); }
+
+.rec-drawer {
+  width: 360px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
   background: var(--panel);
-  cursor: pointer;
-  text-align: left;
-  transition: border-color 0.15s, transform 0.15s;
 }
-.rec-card:hover {
-  border-color: var(--primary);
-  transform: translateY(-1px);
-}
-.rec-card-head {
+.drawer-head {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 8px;
-}
-.rec-card-head strong {
-  font-size: 14px;
-}
-.rec-code {
-  margin-left: 6px;
-  font-size: 11px;
-  color: var(--text-3);
-}
-.rec-chart {
-  padding: 2px 6px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--panel-2);
-  color: var(--primary);
-  font-size: 11px;
-  cursor: pointer;
-}
-.rec-price-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 8px 0 6px;
-  font-size: 13px;
-}
-.rec-price {
-  font-weight: 700;
-}
-.rec-score {
-  margin-left: auto;
-  font-size: 11px;
-  color: var(--primary);
-}
-.rec-thesis {
-  margin: 0 0 4px;
-  font-size: 12px;
-  color: var(--text-1);
-  line-height: 1.5;
-}
-.rec-evidence {
-  margin: 0 0 8px;
-  font-size: 11px;
-  color: var(--text-3);
-  line-height: 1.4;
-}
-.rec-levels {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  font-size: 10px;
-  color: var(--text-3);
-}
-.rec-levels span {
-  padding: 2px 6px;
-  border-radius: 4px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
   background: var(--panel-2);
 }
+.drawer-name { font-size: 15px; font-weight: 700; }
+.drawer-code { font-size: 11px; color: var(--text-3); }
+.drawer-close {
+  width: 26px; height: 26px; border: none; border-radius: 50%;
+  background: var(--panel); color: var(--text-2); cursor: pointer;
+}
+.drawer-body { flex: 1; overflow-y: auto; padding: 12px 14px 20px; }
+.drawer-badges { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.conf-tag { font-size: 10px; color: var(--primary); }
+.drawer-thesis { margin: 10px 0 6px; font-size: 13px; line-height: 1.6; }
+.drawer-price { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.price-main { font-size: 20px; font-weight: 700; }
+.drawer-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
+.drawer-section h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+.evidence-group { margin-bottom: 8px; }
+.evidence-label { font-size: 11px; color: var(--text-3); margin-bottom: 3px; }
+.evidence-group ul, .invalid-list { margin: 0; padding-left: 16px; }
+.evidence-group li, .invalid-list li { font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.level-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); padding: 3px 0; }
+.level-row b { color: var(--text-1); }
+.drawer-actions { display: flex; gap: 8px; margin-top: 14px; }
+.drawer-actions .primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.up { color: var(--up); }
+.down { color: var(--down); }
+.flat { color: var(--text-3); }
+
+.drawer-enter-active, .drawer-leave-active { transition: transform .18s ease, opacity .18s ease; }
+.drawer-enter-from, .drawer-leave-to { transform: translateX(24px); opacity: 0; }
 
 @media (max-width: 820px) {
-  .today-head {
-    padding: 12px 14px 8px;
-  }
-  .today-body {
-    padding: 0 14px 14px;
-  }
-  .card-grid {
-    grid-template-columns: 1fr;
+  .today-head { padding: 12px 12px 8px; }
+  .market-temp { padding: 8px 12px; }
+  .rec-table th, .rec-table td { padding: 6px 8px; }
+  .rec-drawer {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: 86%;
+    z-index: 10;
+    box-shadow: -8px 0 24px rgba(0,0,0,.16);
   }
 }
 </style>
