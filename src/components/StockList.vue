@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue'
 import { useMarket } from '../composables/useMarket'
 import { usePullRefresh } from '../composables/usePullRefresh'
+import MarketBadge from './MarketBadge.vue'
 
 const { state, watchlist, selectStock, removeFromWatchlistMany, displayQuote, refreshQuotes } = useMarket()
 const { distance: ptrDistance, refreshing: ptrRefreshing, onTouchStart: ptrStart, onTouchMove: ptrMove, onTouchEnd: ptrEnd } = usePullRefresh(refreshQuotes)
@@ -98,7 +99,7 @@ function onItemClick(code: string, name: string) {
       >
         <span v-if="managing" class="wl-check" :class="{ checked: selected.includes(info.code) }"></span>
         <span class="wl-name">
-          {{ info.name }}
+          <span class="wl-title-line"><MarketBadge :code="info.code" />{{ info.name }}</span>
           <span class="wl-code num">{{ info.code.toUpperCase() }}</span>
         </span>
         <span class="num wl-price" :class="quote ? pctCls(quote.changePct) : 'flat'">
@@ -286,6 +287,12 @@ function onItemClick(code: string, name: string) {
   min-width: 0;
   font-weight: 600;
   color: var(--text-1);
+}
+.wl-title-line {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
 }
 .wl-code {
   font-size: 11px;

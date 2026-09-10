@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { fetchRecommendations } from '../api'
 import type { RecommendationListResponse, RecommendationRecord, RecommendationStyle } from '../types'
 import { useResearch } from '../composables/useResearch'
+import MarketBadge from './MarketBadge.vue'
 
 const { openCandidate, goFullChart } = useResearch()
 
@@ -128,6 +129,7 @@ onMounted(() => void load())
               @click="selected = item"
             >
               <td class="col-name">
+                <MarketBadge :code="item.code" />
                 <span class="rec-name">{{ item.name }}</span>
                 <span class="rec-code num">{{ item.code.toUpperCase() }}</span>
               </td>
@@ -158,7 +160,7 @@ onMounted(() => void load())
         <aside v-if="selected" class="rec-drawer">
           <header class="drawer-head">
             <div>
-              <div class="drawer-name">{{ selected.name }}</div>
+              <div class="drawer-name"><MarketBadge :code="selected.code" /> {{ selected.name }}</div>
               <div class="drawer-code num">{{ selected.code.toUpperCase() }} · {{ selected.industry || '未分类' }}</div>
             </div>
             <button class="drawer-close" @click="selected = null">✕</button>
@@ -311,7 +313,7 @@ onMounted(() => void load())
 .rec-table tbody tr:hover { background: rgba(30,111,255,.05); }
 .rec-table tbody tr.active { background: rgba(30,111,255,.08); box-shadow: inset 3px 0 0 var(--primary); }
 .rec-table .num { text-align: right; }
-.col-name { min-width: 150px; }
+.col-name { min-width: 150px; display: flex; align-items: center; gap: 6px; }
 .rec-name { font-weight: 600; margin-right: 6px; }
 .rec-code { font-size: 10px; color: var(--text-3); }
 .style-tag {

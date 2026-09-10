@@ -6,6 +6,7 @@ import { useMarket } from '../composables/useMarket'
 import { useResearch } from '../composables/useResearch'
 import { usePullRefresh } from '../composables/usePullRefresh'
 import { SW1_INDUSTRIES } from '../data/stocks'
+import MarketBadge from './MarketBadge.vue'
 
 const { isMobile, addToWatchlist, isInWatchlist, selectStock, setView, setMobileTab } = useMarket()
 const { openCandidate, seedScreener } = useResearch()
@@ -357,7 +358,7 @@ onBeforeUnmount(() => window.clearTimeout(pollTimer))
         </button>
         <span class="am-name">
           {{ s.name }}
-          <span class="am-code num">{{ s.code.toUpperCase() }} · {{ s.industry ?? '其他' }}</span>
+          <span class="am-code num"><MarketBadge :code="s.code" /> {{ s.code.toUpperCase() }} · {{ s.industry ?? '其他' }}</span>
         </span>
         <span class="num am-price" :class="pctCls(s.changePct)">{{ fmtPrice(s.price) }}</span>
         <span class="num am-pct" :class="pctCls(s.changePct)">{{ fmtPct(s.changePct) }}</span>
