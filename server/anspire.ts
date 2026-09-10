@@ -20,7 +20,7 @@ try {
 const execFileAsync = promisify(execFile)
 
 const DEFAULT_BASE_URL = 'https://open-gateway.anspire.cn/v6'
-const DEFAULT_MODEL = 'Doubao-Seed-2.0-lite'
+const DEFAULT_MODEL = 'Doubao-Seed-2.0-pro'
 
 export const API_KEYS = (process.env.ANSPIRE_API_KEYS ?? 'sk-eCVLTPkcWNji3lM15wv3CAp5oGo3h9gu').split(',').map((s) => s.trim()).filter(Boolean)
 const BASE_URL = (process.env.ANSPIRE_LLM_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/$/, '')
