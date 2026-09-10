@@ -211,6 +211,25 @@ function horizonFor(style: RecommendationStyle): number {
   return style === 'limit_up' ? 3 : style === 'pullback' ? 3 : style === 'event' ? 7 : style === 'opinion' ? 7 : 5
 }
 
+function computeVerification(item: RecommendationRecord, stock?: SnapshotStock): RecommendationVerification {
+  const confirmations: string[] = []
+  const conflicts: string[] = []
+  if (item.channels.includes('technical')) confirmations.push('技术形态入选')
+  if (item.channels.includes('fund')) confirmations.push('资金面同向')
+  if (item.channels.includes('event')) confirmations.push('事件催化')
+  if (item.channels.includes('dragon')) confirmations.push('龙虎榜确认')
+  if (item.channels.includes('opinion')) confirmations.push('博主观点')
+  if (stock) {
+    if (stock.changePct > 0 && stock.volumeRatio >= 1.2) confirmations.push('量价配合')
+    if (stock.changePct < -3) conflicts.push('当日跌幅较大')
+    if (stock.volumeRatio > 0 && stock.volumeRatio < 0.8) conflicts.push('量能不足')
+    if (stock.changePct >= 9.8) conflicts.push('短期涨幅过大')
+    if (item.style === 'opinion' && stock.changePct < 0) conflicts.push('观点看多但价格走弱')
+  }
+  const score = Math.max(0, Math.min(100, 50 + confirmations.length * 12 - conflicts.length * 18))
+  return { score, confirmations, conflicts }
+}
+
 function makeRecord(input: {
   id: string
   code: string
@@ -319,7 +338,7 @@ function buildOpinionRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
       style: 'opinion',
       channel: 'opinion',
       thesis: item.reason,
-      score: item.score,
+      score: Math.round(Math.abs(item.score) * item.confidence),
       evidence: item.theses.slice(0, 3),
       industry: item.industry,
       sources: (item.sources ?? []).map((s) => ({
@@ -417,6 +436,13 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     const prev = byCode.get(item.code)
     if (!prev) byCode.set(item.code, item)
     else byCode.set(item.code, mergeRecord(prev, item))
+  }
+
+  const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
+  for (const [code, item] of byCode) {
+    const verification = computeVerification(item, stockMap.get(code))
+    item.verification = verification
+    item.confidence = Math.max(0, Math.min(100, Math.round(item.confidence * (0.4 + verification.score / 200))))
   }
 
   const history = loadHistory()

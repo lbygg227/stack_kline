@@ -205,6 +205,14 @@ onMounted(() => void load())
               </div>
             </section>
 
+            <section v-if="selected.verification" class="drawer-section">
+              <h4>二次核实 <span class="verify-score">{{ selected.verification.score }}</span></h4>
+              <ul class="verify-list">
+                <li v-for="(c, i) in selected.verification.confirmations" :key="'ok' + i" class="verify-ok">✅ {{ c }}</li>
+                <li v-for="(c, i) in selected.verification.conflicts" :key="'bad' + i" class="verify-bad">⚠️ {{ c }}</li>
+              </ul>
+            </section>
+
             <section class="drawer-section">
               <h4>关键价位</h4>
               <div class="level-row"><span>观察</span><b class="num">{{ fmt(selected.levels.entry) }}</b></div>
@@ -375,6 +383,11 @@ onMounted(() => void load())
 .source-thesis { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--text-2); }
 .source-quote { margin-top: 3px; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .source-link { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--primary); text-decoration: none; }
+.verify-score { margin-left: 6px; padding: 1px 7px; border-radius: 10px; background: rgba(30,111,255,.08); color: var(--primary); font-size: 11px; }
+.verify-list { margin: 0; padding: 0; list-style: none; }
+.verify-list li { font-size: 12px; line-height: 1.7; }
+.verify-ok { color: var(--up); }
+.verify-bad { color: var(--down); }
 .level-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); padding: 3px 0; }
 .level-row b { color: var(--text-1); }
 .drawer-actions { display: flex; gap: 8px; margin-top: 14px; }
