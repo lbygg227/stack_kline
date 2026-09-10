@@ -440,7 +440,15 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
 
   const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
   for (const [code, item] of byCode) {
-    const verification = computeVerification(item, stockMap.get(code))
+    const stock = stockMap.get(code)
+    if (stock) {
+      if (!item.price || item.price <= 0) item.price = stock.price
+      if (item.changePct == null) item.changePct = stock.changePct
+      if (!item.levels.entry || !item.levels.target || !item.levels.stopLoss) {
+        item.levels = levelsFor(item.price, item.style)
+      }
+    }
+    const verification = computeVerification(item, stock)
     item.verification = verification
     item.confidence = Math.max(0, Math.min(100, Math.round(item.confidence * (0.4 + verification.score / 200))))
   }
