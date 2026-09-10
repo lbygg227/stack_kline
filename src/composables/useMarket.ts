@@ -4,8 +4,8 @@ import { DEFAULT_WATCHLIST, INDEX_LIST, stockNameOf } from '../data/stocks'
 import { fetchQuotes } from '../api'
 import { loadWatchlist, removeFromWatchlist as removeWatch, removeFromWatchlistMany as removeWatchMany, saveWatchlist, addToWatchlist as addWatch } from '../data/watchlist'
 
-export type DesktopView = 'recommend' | 'market' | 'all-market' | 'events' | 'strategy' | 'opinion' | 'backtest' | 'data'
-export type MobileTab = 'recommend' | 'market' | 'watchlist' | 'all' | 'events' | 'strategy' | 'opinion' | 'backtest' | 'trade' | 'data'
+export type DesktopView = 'recommend' | 'market' | 'all-market' | 'events' | 'strategy' | 'opinion' | 'backtest' | 'simulation' | 'data'
+export type MobileTab = 'recommend' | 'market' | 'watchlist' | 'all' | 'events' | 'strategy' | 'opinion' | 'backtest' | 'simulation' | 'trade' | 'data'
 
 interface MarketState {
   currentCode: string
@@ -153,6 +153,7 @@ export function setMobileTab(tab: MobileTab) {
   else if (tab === 'events') state.view = 'events'
   else if (tab === 'recommend') state.view = 'recommend'
   else if (tab === 'backtest') state.view = 'backtest'
+  else if (tab === 'simulation') state.view = 'simulation'
   else state.view = 'market'
 }
 

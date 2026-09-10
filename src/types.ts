@@ -1181,6 +1181,54 @@ export interface RecommendationPerformanceStats {
   outcomes: RecommendationOutcome[]
 }
 
+export interface SimulationPosition {
+  id: string
+  code: string
+  name: string
+  style: string
+  channels: string[]
+  signalDate: string
+  entryDate: string
+  entryPrice: number
+  shares: number
+  cost: number
+  horizonDays: number
+  target?: number
+  stopLoss?: number
+  currentPrice: number
+  marketValue: number
+  returnPct: number
+}
+
+export interface SimulationTrade {
+  id: string
+  code: string
+  name: string
+  style: string
+  signalDate: string
+  entryDate: string
+  entryPrice: number
+  exitDate: string
+  exitPrice: number
+  shares: number
+  returnPct: number
+  pnl: number
+  horizonDays: number
+}
+
+export interface SimulationSnapshot {
+  initialCapital: number
+  cash: number
+  positionValue: number
+  totalEquity: number
+  totalReturnPct: number
+  winRate: number
+  trades: SimulationTrade[]
+  positions: SimulationPosition[]
+  equityCurve: Array<{ date: string; value: number }>
+  updatedAt: number
+}
+
 export interface BacktestMetricRecord {
   strategyId: string
   style: string

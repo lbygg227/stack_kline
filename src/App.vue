@@ -13,6 +13,7 @@ import DataManagePanel from './components/DataManagePanel.vue'
 import NewsEventPanel from './components/NewsEventPanel.vue'
 import TodayRecommendations from './components/TodayRecommendations.vue'
 import BacktestResearch from './components/BacktestResearch.vue'
+import SimulationPanel from './components/SimulationPanel.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -27,6 +28,7 @@ const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'events', label: '资讯', icon: '📰' },
   { key: 'strategy', label: '选股', icon: '🔍' },
   { key: 'backtest', label: '回测', icon: '🧪' },
+  { key: 'simulation', label: '模拟盘', icon: '💼' },
   { key: 'opinion', label: '观点', icon: '📝' },
   { key: 'trade', label: '交易', icon: '💰' },
   { key: 'data', label: '数据', icon: '🗄️' },
@@ -74,6 +76,7 @@ onBeforeUnmount(() => {
         <NewsEventPanel v-else-if="mobileTab === 'events'" />
         <StrategyPanel v-else-if="mobileTab === 'strategy'" />
         <BacktestResearch v-else-if="mobileTab === 'backtest'" />
+        <SimulationPanel v-else-if="mobileTab === 'simulation'" />
         <OpinionPanel v-else-if="mobileTab === 'opinion'" />
         <TradePanel v-else-if="mobileTab === 'trade'" />
         <DataManagePanel v-else-if="mobileTab === 'data'" />
@@ -85,6 +88,7 @@ onBeforeUnmount(() => {
       <TodayRecommendations v-if="state.view === 'recommend'" class="page-view" />
       <StrategyPanel v-else-if="state.view === 'strategy'" class="page-view" />
       <BacktestResearch v-else-if="state.view === 'backtest'" class="page-view" />
+      <SimulationPanel v-else-if="state.view === 'simulation'" class="page-view" />
       <NewsEventPanel v-else-if="state.view === 'events'" class="page-view" />
       <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
       <AllMarketPanel v-else-if="state.view === 'all-market'" class="page-view" />

@@ -35,6 +35,7 @@ import type {
   Quote,
   RecommendationListResponse,
   RecommendationPerformanceStats,
+  SimulationSnapshot,
   StyleBacktestResult,
   ResearchDossier,
   ResearchRecord,
@@ -778,6 +779,27 @@ export async function refreshRecommendationWeights(): Promise<{
     throw new Error(err?.error ?? `recommendation weights http ${res.status}`)
   }
   return (await res.json()) as { weights: Record<string, number>; updatedAt: number; stats: { matured: number; winRate: number; averageReturnPct: number } }
+}
+
+export async function fetchSimulation(): Promise<SimulationSnapshot> {
+  const res = await fetch('/api/simulation')
+  if (!res.ok) throw new Error(`simulation http ${res.status}`)
+  return (await res.json()) as SimulationSnapshot
+}
+
+export async function syncSimulation(): Promise<SimulationSnapshot> {
+  const res = await fetch('/api/simulation/sync', { method: 'POST' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `simulation sync http ${res.status}`)
+  }
+  return (await res.json()) as SimulationSnapshot
+}
+
+export async function resetSimulation(): Promise<SimulationSnapshot> {
+  const res = await fetch('/api/simulation/reset', { method: 'POST' })
+  if (!res.ok) throw new Error(`simulation reset http ${res.status}`)
+  return (await res.json()) as SimulationSnapshot
 }
 
 export async function fetchRecommendationPerformance(): Promise<RecommendationPerformanceStats> {

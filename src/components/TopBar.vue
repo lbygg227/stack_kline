@@ -142,6 +142,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
       回测研究
     </button>
 
+    <button
+      class="btn nav-btn"
+      :class="{ active: state.view === 'simulation' }"
+      @click="setView(state.view === 'simulation' ? 'market' : 'simulation')"
+    >
+      模拟盘
+    </button>
+
     <div v-if="!isMobile && candidates.length" class="queue-chip">
       <button class="btn" @click="prevCandidate">‹</button>
       <button class="queue-mid" @click="openWorkbench">

@@ -95,6 +95,7 @@ import { buildTodayRecommendations } from './recommendations.ts'
 import { runStyleBacktest } from './style-backtest.ts'
 import { buildRecommendationPerformance } from './recommendation-performance.ts'
 import { getRecommendationWeights, refreshRecommendationWeights } from './recommendation-weights.ts'
+import { getSimulationSnapshot, resetSimulation, syncSimulation } from './simulation.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
   res.statusCode = status
@@ -195,6 +196,32 @@ export function marketDataPlugin(): Plugin {
           return
         }
         const url = new URL(req.url ?? '/', 'http://localhost')
+
+        // ---- 推荐模拟盘 ----
+        if (path === '/api/simulation') {
+          try {
+            sendJson(res, 200, await getSimulationSnapshot((code) => getKlineWithCache(code, 'day', 2000)))
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/simulation/sync' && req.method === 'POST') {
+          try {
+            await syncSimulation((code) => getKlineWithCache(code, 'day', 2000))
+            sendJson(res, 200, await getSimulationSnapshot((code) => getKlineWithCache(code, 'day', 2000)))
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/simulation/reset' && req.method === 'POST') {
+          resetSimulation()
+          sendJson(res, 200, await getSimulationSnapshot((code) => getKlineWithCache(code, 'day', 2000)))
+          return
+        }
 
         // ---- 推荐权重 ----
         if (path === '/api/recommendations/weights') {
