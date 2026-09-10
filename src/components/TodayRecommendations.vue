@@ -190,6 +190,21 @@ onMounted(() => void load())
               </div>
             </section>
 
+            <section v-if="selected.sources?.length" class="drawer-section">
+              <h4>观点来源</h4>
+              <div v-for="s in selected.sources" :key="s.documentId + s.claimId" class="source-item">
+                <div class="source-head">
+                  <span class="source-author">{{ s.authorName }}</span>
+                  <span class="source-platform">{{ s.platform === 'xueqiu' ? '雪球' : s.platform === 'zhihu' ? '知乎' : s.platform }}</span>
+                  <span class="source-stance" :class="s.stance">{{ s.stance === 'bullish' ? '看多' : s.stance === 'bearish' ? '看空' : '中性' }}</span>
+                  <span class="source-conf">置信 {{ (s.confidence * 100).toFixed(0) }}%</span>
+                </div>
+                <div v-if="s.thesis" class="source-thesis">{{ s.thesis }}</div>
+                <div v-if="s.evidenceQuote" class="source-quote">“{{ s.evidenceQuote }}”</div>
+                <a v-if="s.url" class="source-link" :href="s.url" target="_blank" rel="noreferrer" @click.stop>查看原文 ↗</a>
+              </div>
+            </section>
+
             <section class="drawer-section">
               <h4>关键价位</h4>
               <div class="level-row"><span>观察</span><b class="num">{{ fmt(selected.levels.entry) }}</b></div>
@@ -349,6 +364,17 @@ onMounted(() => void load())
 .evidence-label { font-size: 11px; color: var(--text-3); margin-bottom: 3px; }
 .evidence-group ul, .invalid-list { margin: 0; padding-left: 16px; }
 .evidence-group li, .invalid-list li { font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.source-item { padding: 8px 0; border-bottom: 1px dashed var(--border); }
+.source-item:last-child { border-bottom: 0; }
+.source-head { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 11px; }
+.source-author { font-weight: 600; color: var(--text-1); }
+.source-platform { color: var(--text-3); }
+.source-stance.bullish { color: var(--up); }
+.source-stance.bearish { color: var(--down); }
+.source-conf { color: var(--text-3); }
+.source-thesis { margin-top: 4px; font-size: 12px; line-height: 1.5; color: var(--text-2); }
+.source-quote { margin-top: 3px; font-size: 11px; color: var(--text-3); line-height: 1.5; }
+.source-link { display: inline-block; margin-top: 4px; font-size: 11px; color: var(--primary); text-decoration: none; }
 .level-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); padding: 3px 0; }
 .level-row b { color: var(--text-1); }
 .drawer-actions { display: flex; gap: 8px; margin-top: 14px; }

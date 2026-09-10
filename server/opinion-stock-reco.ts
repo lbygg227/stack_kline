@@ -10,6 +10,20 @@ import { listWatchCandidates } from './watch-candidates.ts'
 const DAY = 86_400_000
 const PROXY_PER_INDUSTRY = 3
 
+export interface OpinionSourceLink {
+  documentId: string
+  claimId: string
+  authorName: string
+  platform: OpinionPlatform
+  title: string
+  url: string
+  publishedAt: number
+  stance: OpinionStance
+  confidence: number
+  thesis: string
+  evidenceQuote: string
+}
+
 export interface OpinionStockRecoItem {
   code: string
   name: string
@@ -25,6 +39,7 @@ export interface OpinionStockRecoItem {
   risks: string[]
   reason: string
   source?: 'direct' | 'proxy'
+  sources?: OpinionSourceLink[]
 }
 
 export interface OpinionStockRecoOptions {
@@ -46,6 +61,15 @@ function stanceLabel(stance: OpinionStance): string {
 
 function normalizeCode(code: string): string {
   return code.trim().toLowerCase()
+}
+
+function webUrl(url: string, platform: string): string {
+  if (platform !== 'zhihu') return url
+  const answer = url.match(/\/api\/v4\/answers\/(\d+)/)
+  if (answer) return 'https://www.zhihu.com/answer/' + answer[1]
+  const article = url.match(/\/api\/v4\/articles\/(\d+)/)
+  if (article) return 'https://zhuanlan.zhihu.com/p/' + article[1]
+  return url
 }
 
 function pickIndustryProxies(
@@ -98,6 +122,19 @@ export function aggregateOpinionStockReco(
       risks: s.risks.slice(0, 3),
       reason: `${stanceLabel(s.stance)} · ${s.authors.length} 位博主 · ${s.claimCount} 条 · 一致度 ${Math.round(s.agreement * 100)}%`,
       source: 'direct' as const,
+      sources: s.evidence.slice(0, 6).map((e) => ({
+        documentId: e.documentId,
+        claimId: e.claimId,
+        authorName: e.authorName,
+        platform: e.platform,
+        title: e.title,
+        url: webUrl(e.url, e.platform),
+        publishedAt: e.publishedAt,
+        stance: e.stance,
+        confidence: e.confidence,
+        thesis: e.thesis,
+        evidenceQuote: e.evidenceQuote,
+      })),
     }))
     .sort(
       (a, b) =>

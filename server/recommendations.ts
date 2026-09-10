@@ -29,6 +29,26 @@ export interface RecommendationEvidence {
   dragon?: string[]
 }
 
+export interface RecommendationSource {
+  documentId: string
+  claimId: string
+  authorName: string
+  platform: string
+  title: string
+  url: string
+  publishedAt: number
+  stance: string
+  confidence: number
+  thesis: string
+  evidenceQuote: string
+}
+
+export interface RecommendationVerification {
+  score: number
+  confirmations: string[]
+  conflicts: string[]
+}
+
 export interface RecommendationRecord {
   id: string
   code: string
@@ -47,6 +67,8 @@ export interface RecommendationRecord {
   price?: number
   changePct?: number
   industry?: string
+  sources?: RecommendationSource[]
+  verification?: RecommendationVerification
 }
 
 export interface MarketTemperature {
@@ -202,6 +224,8 @@ function makeRecord(input: {
   changePct?: number
   industry?: string
   createdAt?: number
+  sources?: RecommendationSource[]
+  verification?: RecommendationVerification
 }): RecommendationRecord {
   const evidenceKey = input.channel === 'technical' ? 'technical' : input.channel === 'event' ? 'event' : input.channel === 'opinion' ? 'opinion' : input.channel === 'fund' ? 'fund' : 'dragon'
   return {
@@ -222,6 +246,8 @@ function makeRecord(input: {
     price: input.price,
     changePct: input.changePct,
     industry: input.industry,
+    sources: input.sources,
+    verification: input.verification,
   }
 }
 
@@ -296,6 +322,19 @@ function buildOpinionRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
       score: item.score,
       evidence: item.theses.slice(0, 3),
       industry: item.industry,
+      sources: (item.sources ?? []).map((s) => ({
+        documentId: s.documentId,
+        claimId: s.claimId,
+        authorName: s.authorName,
+        platform: s.platform,
+        title: s.title,
+        url: s.url,
+        publishedAt: s.publishedAt,
+        stance: s.stance,
+        confidence: s.confidence,
+        thesis: s.thesis,
+        evidenceQuote: s.evidenceQuote,
+      })),
     }),
   )
 }
@@ -345,6 +384,8 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
     dragon: [...(target.evidence.dragon ?? []), ...(incoming.evidence.dragon ?? [])],
   }
   const better = incoming.score > target.score
+  const sources = [...(target.sources ?? []), ...(incoming.sources ?? [])]
+  const verification = target.verification ?? incoming.verification
   return {
     ...target,
     channels,
@@ -358,6 +399,8 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
     industry: target.industry ?? incoming.industry,
     levels: better ? incoming.levels : target.levels,
     invalidIf: better ? incoming.invalidIf : target.invalidIf,
+    sources: sources.length ? sources : undefined,
+    verification,
   }
 }
 

@@ -1090,6 +1090,26 @@ export interface RecommendationEvidence {
   dragon?: string[]
 }
 
+export interface RecommendationSource {
+  documentId: string
+  claimId: string
+  authorName: string
+  platform: string
+  title: string
+  url: string
+  publishedAt: number
+  stance: string
+  confidence: number
+  thesis: string
+  evidenceQuote: string
+}
+
+export interface RecommendationVerification {
+  score: number
+  confirmations: string[]
+  conflicts: string[]
+}
+
 export interface RecommendationRecord {
   id: string
   code: string
@@ -1108,6 +1128,8 @@ export interface RecommendationRecord {
   price?: number
   changePct?: number
   industry?: string
+  sources?: RecommendationSource[]
+  verification?: RecommendationVerification
 }
 
 export interface MarketTemperature {

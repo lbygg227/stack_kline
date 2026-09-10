@@ -4,6 +4,9 @@ export interface OpinionSignalEvidence {
   documentId: string
   claimId: string
   authorName: string
+  platform: OpinionPlatform
+  title: string
+  url: string
   publishedAt: number
   stance: OpinionStance
   confidence: number
@@ -107,6 +110,9 @@ export function buildOpinionSignals(
         documentId: document.id,
         claimId: claim.id,
         authorName: document.authorName,
+        platform: document.platform,
+        title: document.title,
+        url: document.url,
         publishedAt: document.publishedAt,
         stance: claim.stance,
         confidence: claim.confidence,
