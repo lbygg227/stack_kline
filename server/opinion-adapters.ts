@@ -386,8 +386,7 @@ class XueqiuAdapter implements OpinionSourceAdapter {
   async fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult> {
     const user = await this.resolveUser(subscription)
     const statuses: Array<Record<string, unknown>> = []
-    let reachedLastPost = false
-    for (let page = 1; page <= 3 && !reachedLastPost; page++) {
+    for (let page = 1; page <= 3; page++) {
       const url = new URL('https://api.xueqiu.com/v4/statuses/user_timeline.json')
       url.searchParams.set('user_id', user.userId)
       url.searchParams.set('type', '0')
@@ -404,10 +403,8 @@ class XueqiuAdapter implements OpinionSourceAdapter {
       const pageItems = Array.isArray(rawStatuses) ? rawStatuses as Array<Record<string, unknown>> : []
       for (const status of pageItems) {
         const statusId = String(status.id ?? status.status_id ?? '')
-        if (subscription.lastPostId && statusId === subscription.lastPostId) {
-          reachedLastPost = true
-          break
-        }
+        // 置顶旧帖可能排在最前，不能遇到 lastPostId 就停止，只跳过该帖继续扫描。
+        if (subscription.lastPostId && statusId === subscription.lastPostId) continue
         statuses.push(status)
       }
       if (pageItems.length < 20) break
