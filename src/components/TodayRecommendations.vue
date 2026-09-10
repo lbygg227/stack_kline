@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { fetchRecommendations } from '../api'
 import type { RecommendationListResponse, RecommendationRecord, RecommendationStyle } from '../types'
 import { useResearch } from '../composables/useResearch'
@@ -10,7 +10,9 @@ const loading = ref(false)
 const error = ref('')
 const data = ref<RecommendationListResponse | null>(null)
 
-const STYLE_ORDER: RecommendationStyle[] = ['trend', 'limit_up', 'pullback', 'leader', 'event', 'fund', 'opinion']
+const rankedItems = computed(() =>
+  [...(data.value?.items ?? [])].sort((a, b) => b.confidence - a.confidence || b.score - a.score),
+)
 const STYLE_LABEL: Record<RecommendationStyle, string> = {
   trend: '趋势',
   limit_up: '打板',
@@ -86,15 +88,9 @@ onMounted(() => void load())
     </div>
 
     <div v-if="data" class="today-body">
-      <section v-for="style in STYLE_ORDER" :key="style" class="today-section">
-        <div class="section-head">
-          <h3>{{ STYLE_LABEL[style] }}</h3>
-          <span class="section-count">{{ data.grouped[style]?.length ?? 0 }}</span>
-        </div>
-
-        <div v-if="!data.grouped[style]?.length" class="section-empty">暂无候选</div>
-        <div v-else class="card-grid">
-          <article v-for="item in data.grouped[style]" :key="item.id" class="rec-card" @click="openItem(item)">
+      <div class="ranked-head">按确定性排序 · 共 {{ rankedItems.length }} 只</div>
+      <div class="card-grid">
+          <article v-for="item in rankedItems" :key="item.id" class="rec-card" @click="openItem(item)">
             <div class="rec-card-head">
               <div>
                 <strong>{{ item.name }}</strong>
@@ -102,6 +98,7 @@ onMounted(() => void load())
               </div>
               <button class="rec-chart" title="跳转K线" @click.stop="goFullChart(item.code, item.name)">K线 ↗</button>
             </div>
+            <div class="rec-style">{{ STYLE_LABEL[item.style] }}</div>
 
             <div class="rec-price-row">
               <span class="num rec-price">{{ item.price?.toFixed(2) ?? '--' }}</span>
@@ -121,8 +118,7 @@ onMounted(() => void load())
               <span>周期 {{ item.horizonDays }}日</span>
             </div>
           </article>
-        </div>
-      </section>
+      </div>
     </div>
   </div>
 </template>
@@ -203,10 +199,26 @@ onMounted(() => void load())
   font-size: 12px;
   text-align: center;
 }
+.ranked-head {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
   gap: 10px;
+}
+.rec-style {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 1px 7px;
+  border-radius: 10px;
+  background: rgba(30, 111, 255, 0.08);
+  color: var(--primary);
+  font-size: 10px;
+  font-weight: 600;
 }
 .rec-card {
   padding: 12px;

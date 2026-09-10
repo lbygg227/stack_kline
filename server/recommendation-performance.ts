@@ -33,6 +33,7 @@ export interface RecommendationPerformanceStats {
   winRate: number
   averageReturnPct: number
   byStyle: Record<string, { count: number; winRate: number; averageReturnPct: number }>
+  byChannel: Record<string, { count: number; winRate: number; averageReturnPct: number }>
   outcomes: RecommendationOutcome[]
 }
 
@@ -139,6 +140,23 @@ export async function buildRecommendationPerformance(
     bucket.winRate = bucket.count ? bucket.winRate / bucket.count * 100 : 0
   }
 
+  const byChannel: Record<string, { count: number; winRate: number; averageReturnPct: number }> = {}
+  for (const outcome of outcomes) {
+    const channels = outcome.channels.length ? outcome.channels : ['unknown']
+    for (const channel of channels) {
+      const bucket = byChannel[channel] ?? { count: 0, winRate: 0, averageReturnPct: 0 }
+      bucket.count += 1
+      bucket.averageReturnPct += outcome.returnPct ?? 0
+      if ((outcome.returnPct ?? 0) > 0) bucket.winRate += 1
+      byChannel[channel] = bucket
+    }
+  }
+  for (const key of Object.keys(byChannel)) {
+    const bucket = byChannel[key]
+    bucket.averageReturnPct = bucket.count ? bucket.averageReturnPct / bucket.count : 0
+    bucket.winRate = bucket.count ? bucket.winRate / bucket.count * 100 : 0
+  }
+
   return {
     generatedAt: Date.now(),
     totalRecords: records.length,
@@ -147,6 +165,7 @@ export async function buildRecommendationPerformance(
     winRate,
     averageReturnPct: avg,
     byStyle,
+    byChannel,
     outcomes: outcomes.slice(0, 200),
   }
 }

@@ -1155,6 +1155,7 @@ export interface RecommendationPerformanceStats {
   winRate: number
   averageReturnPct: number
   byStyle: Record<string, { count: number; winRate: number; averageReturnPct: number }>
+  byChannel: Record<string, { count: number; winRate: number; averageReturnPct: number }>
   outcomes: RecommendationOutcome[]
 }
 

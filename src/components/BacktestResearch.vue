@@ -217,6 +217,36 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
             <div class="metric"><span>胜率</span><b>{{ fmt(perf.winRate) }}%</b></div>
             <div class="metric"><span>平均收益</span><b :class="perf.averageReturnPct >= 0 ? 'up' : 'down'">{{ fmtPct(perf.averageReturnPct) }}</b></div>
           </div>
+          <div class="perf-breakdown">
+            <div>
+              <h4>按风格</h4>
+              <table class="perf-table">
+                <thead><tr><th>风格</th><th>数量</th><th>胜率</th><th>平均收益</th></tr></thead>
+                <tbody>
+                  <tr v-for="(bucket, key) in perf.byStyle" :key="key">
+                    <td>{{ key }}</td>
+                    <td>{{ bucket.count }}</td>
+                    <td>{{ fmt(bucket.winRate) }}%</td>
+                    <td :class="bucket.averageReturnPct >= 0 ? 'up' : 'down'">{{ fmtPct(bucket.averageReturnPct) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <h4>按通道</h4>
+              <table class="perf-table">
+                <thead><tr><th>通道</th><th>数量</th><th>胜率</th><th>平均收益</th></tr></thead>
+                <tbody>
+                  <tr v-for="(bucket, key) in perf.byChannel" :key="key">
+                    <td>{{ key }}</td>
+                    <td>{{ bucket.count }}</td>
+                    <td>{{ fmt(bucket.winRate) }}%</td>
+                    <td :class="bucket.averageReturnPct >= 0 ? 'up' : 'down'">{{ fmtPct(bucket.averageReturnPct) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
           <table v-if="perf.outcomes.length" class="perf-table">
             <thead><tr><th>股票</th><th>风格</th><th>信号日</th><th>收益</th><th>最大盈利</th><th>最大亏损</th><th>目标</th><th>止损</th></tr></thead>
             <tbody>
@@ -269,6 +299,8 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
 .bt-perf-actions { display: flex; gap: 8px; }
 .weight-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .weight-chip { padding: 3px 8px; border-radius: 12px; border: 1px solid var(--border); background: var(--panel-2); color: var(--text-2); font-size: 11px; }
+.perf-breakdown { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 14px; }
+.perf-breakdown h4 { margin: 0; font-size: 13px; }
 .perf-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 10px; }
 .perf-table th, .perf-table td { padding: 6px 8px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
 .perf-table th:first-child, .perf-table td:first-child { text-align: left; }
@@ -280,5 +312,6 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
   .bt-head { padding: 12px 14px 8px; }
   .bt-body { padding: 0 14px 14px; }
   .bt-row { grid-template-columns: 1fr 1fr; }
+  .perf-breakdown { grid-template-columns: 1fr; }
 }
 </style>
