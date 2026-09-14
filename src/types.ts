@@ -1337,6 +1337,49 @@ export interface RecommendationAttribution {
   }>
 }
 
+export interface StockHistoryItem {
+  signalDate: string
+  style: string
+  channels: string[]
+  confidence: number
+  score: number
+  thesis: string
+  reasonLabels: string[]
+  dimensions: string[]
+  entryPrice?: number
+  target?: number
+  stopLoss?: number
+  horizonDays: number
+  settled: boolean
+  returnPct?: number
+  benchmarkReturnPct?: number
+  excessPct?: number
+  maxGainPct?: number
+  maxLossPct?: number
+  hitTarget: boolean
+  hitStop: boolean
+  daysToPeak?: number
+}
+
+export interface StockHistoryResponse {
+  code: string
+  name: string
+  generatedAt: number
+  stats: {
+    total: number
+    settled: number
+    pending: number
+    winRate: number
+    averageReturnPct: number
+    averageExcessPct: number
+    hitTargetRate: number
+    hitStopRate: number
+  }
+  verdict: string
+  byDimension: Array<{ dimension: string; samples: number; excessHitRate: number; averageExcessPct: number }>
+  items: StockHistoryItem[]
+}
+
 export interface WeightAdjustment {
   at: number
   scope: 'style' | 'dimension' | 'target' | 'confidence'

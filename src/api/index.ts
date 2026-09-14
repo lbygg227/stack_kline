@@ -37,6 +37,7 @@ import type {
   RecommendationPerformanceStats,
   RecommendationAttribution,
   RecommendationWeightState,
+  StockHistoryResponse,
   WeightAdjustment,
   SimulationSnapshot,
   StyleBacktestResult,
@@ -792,6 +793,15 @@ export async function refreshRecommendationWeights(): Promise<RecommendationWeig
     throw new Error(err?.error ?? `recommendation weights http ${res.status}`)
   }
   return (await res.json()) as RecommendationWeightRefreshResult
+}
+
+export async function fetchStockRecommendationHistory(code: string): Promise<StockHistoryResponse> {
+  const res = await fetch(`/api/recommendations/history?code=${encodeURIComponent(code)}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `recommendation history http ${res.status}`)
+  }
+  return (await res.json()) as StockHistoryResponse
 }
 
 export async function fetchRecommendationAttribution(): Promise<RecommendationAttribution> {

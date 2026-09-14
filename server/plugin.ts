@@ -101,6 +101,7 @@ import {
   refreshRecommendationWeights,
 } from './recommendation-weights.ts'
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
+import { buildStockRecommendationHistory } from './recommendation-history.ts'
 import { getSimulationSnapshot, resetSimulation, syncSimulation } from './simulation.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
@@ -244,6 +245,24 @@ export function marketDataPlugin(): Plugin {
               dimensionWeights: getDimensionWeights(),
               state: getRecommendationWeightState(),
             })
+          }
+          return
+        }
+
+        // ---- 单只股票的历史推荐对账 ----
+        if (path === '/api/recommendations/history') {
+          const code = (url.searchParams.get('code') ?? '').trim().toLowerCase()
+          if (!/^(sh|sz|bj)\d{6}$/.test(code)) {
+            sendJson(res, 400, { error: 'code 参数格式应为 sh600519' })
+            return
+          }
+          try {
+            const result = await buildStockRecommendationHistory(code, (c) => getKlineWithCache(c, 'day', 2000), {
+              limit: Number(url.searchParams.get('limit')) || 30,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
           return
         }

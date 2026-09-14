@@ -71,7 +71,7 @@ type RecommendationReason = {
   strength: number
 }
 
-type StoredRecord = {
+export type StoredRecord = {
   id: string
   code: string
   name: string
@@ -81,6 +81,7 @@ type StoredRecord = {
   horizonDays: number
   levels?: { entry?: number; target?: number; stopLoss?: number }
   createdAt: number
+  thesis?: string
   confidence?: number
   score?: number
   verification?: { score?: number }
@@ -157,12 +158,16 @@ async function loadBarsBatch(
 
 export async function buildRecommendationPerformance(
   loadBars: (code: string) => Promise<KLineBar[]>,
-  options: { minAgeDays?: number; limit?: number; now?: number } = {},
+  options: { minAgeDays?: number; limit?: number; now?: number; codes?: string[] } = {},
 ): Promise<RecommendationPerformanceStats> {
   const minAgeDays = Math.max(0, options.minAgeDays ?? 0)
   const limit = Math.max(1, Math.min(500, options.limit ?? 300))
   const now = options.now ?? Date.now()
-  const records = loadStoredRecords().sort((a, b) => b.signalDate.localeCompare(a.signalDate)).slice(0, limit)
+  const wanted = options.codes?.length ? new Set(options.codes.map((code) => code.toLowerCase())) : null
+  const records = loadStoredRecords()
+    .filter((record) => !wanted || wanted.has(record.code.toLowerCase()))
+    .sort((a, b) => b.signalDate.localeCompare(a.signalDate))
+    .slice(0, limit)
 
   const barMap = await loadBarsBatch([...records.map((r) => r.code), BENCHMARK_CODE], loadBars)
   const benchBars = barMap.get(BENCHMARK_CODE) ?? []

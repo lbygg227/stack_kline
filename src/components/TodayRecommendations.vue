@@ -1,7 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { fetchRecommendations } from '../api'
-import type { RecommendationListResponse, RecommendationRecord, RecommendationStyle } from '../types'
+import { computed, onMounted, ref, watch } from 'vue'
+import { fetchRecommendations, fetchStockRecommendationHistory } from '../api'
+import type {
+  RecommendationListResponse,
+  RecommendationRecord,
+  RecommendationStyle,
+  StockHistoryResponse,
+} from '../types'
 import { useResearch } from '../composables/useResearch'
 import MarketBadge from './MarketBadge.vue'
 
@@ -11,6 +16,9 @@ const loading = ref(false)
 const error = ref('')
 const data = ref<RecommendationListResponse | null>(null)
 const selected = ref<RecommendationRecord | null>(null)
+const history = ref<StockHistoryResponse | null>(null)
+const historyLoading = ref(false)
+const historyError = ref('')
 
 const STYLE_LABEL: Record<RecommendationStyle, string> = {
   trend: '趋势',
@@ -160,6 +168,23 @@ async function openWorkbench(item: RecommendationRecord) {
 
 const fmtPct = (v?: number) => (v == null ? '--' : (v > 0 ? '+' : '') + v.toFixed(2) + '%')
 const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
+
+watch(selected, (item) => {
+  history.value = null
+  historyError.value = ''
+  if (item) void loadHistory(item.code)
+})
+
+async function loadHistory(code: string) {
+  historyLoading.value = true
+  try {
+    history.value = await fetchStockRecommendationHistory(code)
+  } catch (e) {
+    historyError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    historyLoading.value = false
+  }
+}
 
 onMounted(() => void load())
 </script>
@@ -348,6 +373,46 @@ onMounted(() => void load())
             </section>
 
             <section class="drawer-section">
+              <h4>
+                该股历史推荐对账
+                <span v-if="history" class="reason-score">{{ history.stats.settled }} / {{ history.stats.total }} 已结算</span>
+              </h4>
+              <div v-if="historyLoading" class="history-state">正在对账历史推荐…</div>
+              <div v-else-if="historyError" class="history-state down">{{ historyError }}</div>
+              <template v-else-if="history">
+                <p class="history-verdict">{{ history.verdict }}</p>
+                <div v-if="history.stats.settled" class="history-metrics">
+                  <span>胜率 <b>{{ fmt(history.stats.winRate, 0) }}%</b></span>
+                  <span>平均收益 <b :class="history.stats.averageReturnPct >= 0 ? 'up' : 'down'">{{ fmtPct(history.stats.averageReturnPct) }}</b></span>
+                  <span>平均超额 <b :class="history.stats.averageExcessPct >= 0 ? 'up' : 'down'">{{ fmtPct(history.stats.averageExcessPct) }}</b></span>
+                  <span>目标命中 <b>{{ fmt(history.stats.hitTargetRate, 0) }}%</b></span>
+                  <span>止损触发 <b class="down">{{ fmt(history.stats.hitStopRate, 0) }}%</b></span>
+                </div>
+                <div v-if="history.byDimension.length" class="history-dims">
+                  <span v-for="d in history.byDimension" :key="d.dimension" class="dim-chip">
+                    {{ DIMENSION_LABEL[d.dimension] ?? d.dimension }} 跑赢 {{ fmt(d.excessHitRate, 0) }}%
+                  </span>
+                </div>
+                <table class="history-table">
+                  <thead><tr><th>信号日</th><th>理由</th><th>收益</th><th>超额</th><th>目标/止损</th></tr></thead>
+                  <tbody>
+                    <tr v-for="h in history.items.slice(0, 8)" :key="h.signalDate + h.style">
+                      <td>{{ h.signalDate }}</td>
+                      <td class="history-reason">{{ h.reasonLabels.slice(0, 2).join(' / ') || STYLE_LABEL[h.style as RecommendationStyle] || h.style }}</td>
+                      <td :class="(h.returnPct ?? 0) >= 0 ? 'up' : (h.returnPct == null ? 'flat' : 'down')">
+                        {{ h.settled ? fmtPct(h.returnPct) : '待结算' }}
+                      </td>
+                      <td :class="(h.excessPct ?? 0) >= 0 ? 'up' : (h.excessPct == null ? 'flat' : 'down')">
+                        {{ h.excessPct == null ? '--' : fmtPct(h.excessPct) }}
+                      </td>
+                      <td>{{ h.hitTarget ? '目标✓' : h.hitStop ? '止损✗' : '—' }}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </template>
+            </section>
+
+            <section class="drawer-section">
               <h4>关键价位</h4>
               <div class="level-row"><span>观察</span><b class="num">{{ fmt(selected.levels.entry) }}</b></div>
               <div class="level-row"><span>目标</span><b class="num up">{{ fmt(selected.levels.target) }}</b></div>
@@ -512,6 +577,24 @@ onMounted(() => void load())
 .price-main { font-size: 20px; font-weight: 700; }
 .drawer-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .drawer-section h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+.history-state { font-size: 11px; color: var(--text-3); padding: 4px 0; }
+.history-verdict { margin: 0 0 6px; font-size: 12px; line-height: 1.6; color: var(--text-2); }
+.history-metrics { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+.history-metrics b { color: var(--text-1); }
+.history-dims { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+.dim-chip {
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  font-size: 10px;
+  color: var(--text-2);
+}
+.history-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.history-table th, .history-table td { padding: 3px 4px; border-bottom: 1px solid var(--border); text-align: right; }
+.history-table th:first-child, .history-table td:first-child { text-align: left; }
+.history-table th { color: var(--text-3); font-weight: 600; }
+.history-reason { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .reason-score { margin-left: 6px; padding: 1px 7px; border-radius: 10px; background: rgba(30,111,255,.08); color: var(--primary); font-size: 11px; }
 .reason-group { margin-bottom: 10px; }
 .reason-group-label {
