@@ -94,7 +94,13 @@ import { runOpinionBacktest } from './opinion-backtest.ts'
 import { buildTodayRecommendations } from './recommendations.ts'
 import { runStyleBacktest } from './style-backtest.ts'
 import { buildRecommendationPerformance } from './recommendation-performance.ts'
-import { getRecommendationWeights, refreshRecommendationWeights } from './recommendation-weights.ts'
+import {
+  getDimensionWeights,
+  getRecommendationWeightState,
+  getRecommendationWeights,
+  refreshRecommendationWeights,
+} from './recommendation-weights.ts'
+import { buildRecommendationAttribution } from './recommendation-attribution.ts'
 import { getSimulationSnapshot, resetSimulation, syncSimulation } from './simulation.ts'
 
 const sendJson = (res: ServerResponse, status: number, payload: unknown) => {
@@ -233,7 +239,25 @@ export function marketDataPlugin(): Plugin {
               sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
             }
           } else {
-            sendJson(res, 200, { weights: getRecommendationWeights() })
+            sendJson(res, 200, {
+              weights: getRecommendationWeights(),
+              dimensionWeights: getDimensionWeights(),
+              state: getRecommendationWeightState(),
+            })
+          }
+          return
+        }
+
+        // ---- 荐股归因与偏差诊断 ----
+        if (path === '/api/recommendations/attribution') {
+          try {
+            const result = await buildRecommendationAttribution((code) => getKlineWithCache(code, 'day', 2000), {
+              minAgeDays: Number(url.searchParams.get('minAgeDays')) || 0,
+              limit: Number(url.searchParams.get('limit')) || 300,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
           return
         }
@@ -242,7 +266,7 @@ export function marketDataPlugin(): Plugin {
         if (path === '/api/recommendations/performance') {
           try {
             const result = await buildRecommendationPerformance((code) => getKlineWithCache(code, 'day', 2000), {
-              minAgeDays: Number(url.searchParams.get('minAgeDays')) || 3,
+              minAgeDays: Number(url.searchParams.get('minAgeDays')) || 0,
               limit: Number(url.searchParams.get('limit')) || 300,
             })
             sendJson(res, 200, result)
