@@ -220,7 +220,10 @@ export async function refreshRecommendationWeights(
       from: previous.confidenceScale,
       to: nextConfidenceScale,
       samples: attribution.stats.matured,
-      reason: '校准误差 ' + attribution.bias.expectedCalibrationError.toFixed(1) + 'pct',
+      reason:
+        '置信度校准：实际胜率比预测' + (attribution.bias.calibrationGapPct < 0 ? '低 ' : '高 ') +
+        Math.abs(attribution.bias.calibrationGapPct).toFixed(0) + ' 个百分点（校准误差 ' +
+        attribution.bias.expectedCalibrationError.toFixed(1) + 'pct）',
     })
   }
 
