@@ -1244,6 +1244,8 @@ export interface RecommendationOutcome {
   style: string
   channels: string[]
   signalDate: string
+  entryDate?: string
+  exitDate?: string
   entryPrice?: number
   exitPrice?: number
   returnPct?: number
@@ -1352,6 +1354,8 @@ export interface RecommendationAttribution {
     name: string
     style: string
     signalDate: string
+    entryDate?: string
+    exitDate?: string
     dimensions: string[]
     reasonLabels: string[]
     returnPct?: number
@@ -1406,6 +1410,28 @@ export interface StockHistoryResponse {
   verdict: string
   byDimension: Array<{ dimension: string; samples: number; excessHitRate: number; averageExcessPct: number }>
   items: StockHistoryItem[]
+}
+
+export interface DigestSection {
+  title: string
+  lines: string[]
+}
+
+export interface DailyDigest {
+  date: string
+  generatedAt: number
+  sections: DigestSection[]
+  text: string
+  stats: {
+    recommendCount: number
+    observeCount: number
+    settledToday: number
+    matured: number
+    winRate: number
+    averageReturnPct: number
+    averageExcessPct: number
+  }
+  push: { pushed: boolean; channel?: string; error?: string }
 }
 
 export interface WeightAdjustment {

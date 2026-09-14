@@ -3,6 +3,7 @@ import type {
   BacktestConfig,
   BacktestResult,
   BatchAnalysisResponse,
+  DailyDigest,
   DataCoverageResponse,
   FusionResult,
   KLineBar,
@@ -801,6 +802,34 @@ export async function refreshRecommendationWeights(): Promise<RecommendationWeig
     throw new Error(err?.error ?? `recommendation weights http ${res.status}`)
   }
   return (await res.json()) as RecommendationWeightRefreshResult
+}
+
+export async function fetchDailyDigest(): Promise<{ digest: DailyDigest | null; channel: string | null; autoPush: boolean }> {
+  const res = await fetch('/api/digest')
+  if (!res.ok) throw new Error(`digest http ${res.status}`)
+  return (await res.json()) as { digest: DailyDigest | null; channel: string | null; autoPush: boolean }
+}
+
+export async function fetchDigestHistory(limit = 20): Promise<DailyDigest[]> {
+  const res = await fetch(`/api/digest/history?limit=${limit}`)
+  if (!res.ok) throw new Error(`digest history http ${res.status}`)
+  return ((await res.json()) as { digests: DailyDigest[] }).digests
+}
+
+export async function generateDailyDigest(push = false): Promise<{ digest: DailyDigest; channel: string | null }> {
+  const res = await fetch(`/api/digest/generate${push ? '?push=1' : ''}`, { method: 'POST' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `digest generate http ${res.status}`)
+  }
+  return (await res.json()) as { digest: DailyDigest; channel: string | null }
+}
+
+export async function pushDailyDigest(): Promise<{ pushed: boolean; channel: string | null; error?: string }> {
+  const res = await fetch('/api/digest/push', { method: 'POST' })
+  const body = (await res.json().catch(() => null)) as { pushed?: boolean; channel?: string | null; error?: string } | null
+  if (!res.ok && !body) throw new Error(`digest push http ${res.status}`)
+  return { pushed: Boolean(body?.pushed), channel: body?.channel ?? null, error: body?.error }
 }
 
 export async function fetchStockRecommendationHistory(code: string): Promise<StockHistoryResponse> {
