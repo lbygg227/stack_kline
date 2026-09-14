@@ -212,7 +212,17 @@ export function marketDataPlugin(): Plugin {
         dragonTigerScheduler.stop()
         digestScheduler.stop()
       })
-      server.middlewares.use(async (req, res, next) => {
+      // 开发期 vite 会在文件变更后重启服务并重新执行 configureServer，
+      // 旧的中间件会残留在 connect 栈里继续用「过期代码」响应请求。
+      // 这里先清掉上一次注册的 API 中间件，保证同一时刻只有最新实例在服务。
+      const stack = (server.middlewares as unknown as { stack?: Array<{ handle?: unknown }> }).stack
+      if (Array.isArray(stack)) {
+        for (let i = stack.length - 1; i >= 0; i--) {
+          const handle = stack[i]?.handle as { __marketDataApi?: boolean } | undefined
+          if (handle && handle.__marketDataApi) stack.splice(i, 1)
+        }
+      }
+      const apiHandler = async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
         const path = (req.url ?? '/').split('?')[0]
         if (!path.startsWith('/api/')) {
           next()
@@ -1511,7 +1521,9 @@ export function marketDataPlugin(): Plugin {
         }
 
         sendJson(res, 404, { error: `unknown api: ${path}` })
-      })
+      }
+      ;(apiHandler as unknown as { __marketDataApi?: boolean }).__marketDataApi = true
+      server.middlewares.use(apiHandler)
   }
   return {
     name: 'market-data-server',
