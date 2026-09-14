@@ -18,7 +18,9 @@ import {
 } from './recommendation-weights.ts'
 import { buildFundamentalProfile, buildIndustryValuation, type FundamentalProfile } from './fundamentals.ts'
 import { evaluateRecordGuard, getReasonGuard, type GuardDecision } from './recommendation-guard.ts'
-import { upsertWatchCandidate } from './watch-candidates.ts'
+import { reconcileObserving, trackBlocked, type RecycledItem } from './observe-recycle.ts'
+
+export type { RecycledItem }
 import {
   dedupeReasons,
   dragonReasons,
@@ -126,6 +128,10 @@ export interface RecommendationListResponse {
   market?: MarketTemperature
   /** 被守卫拦下、只做观察的标的（含拦截原因） */
   observing: RecommendationRecord[]
+  /** 从观察名单回到推荐的标的（条件已改善） */
+  recycled: RecycledItem[]
+  /** 连续多日被拦、理由可能长期不成立的标的 */
+  staleObserving: Array<{ code: string; name: string; days: number; note: string }>
 }
 
 export function computeMarketTemperature(stocks: SnapshotStock[]): MarketTemperature {
@@ -644,25 +650,11 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
   const top = STYLE_KEYS.flatMap((key) => grouped[key]).sort((a, b) => b.score - a.score).slice(0, 80)
 
   const observingTop = observing.slice(0, 20)
-  for (const item of observingTop) {
-    try {
-      upsertWatchCandidate({
-        code: item.code,
-        name: item.name,
-        industry: item.industry,
-        status: 'observe',
-        sources: ['manual'],
-        context: {
-          reason: item.thesis,
-          industry: item.industry,
-          recommendation: 'observe',
-          conditionsSummary: item.guard?.note,
-          note: '推荐守卫拦截：' + (item.guard?.note || ''),
-        },
-      })
-    } catch {
-      /* 代码格式异常时忽略 */
-    }
+  // 记录被拦标的（含连续拦截天数），供观察名单展示与回流判断
+  try {
+    trackBlocked(observingTop)
+  } catch {
+    /* 观察队列写入失败不影响推荐 */
   }
 
   for (const item of top) {
@@ -671,6 +663,17 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
   saveHistory(history)
   saveRecommendationRecords(top)
 
+  // 观察名单回流：今天通过守卫的标的自动回到推荐，并记录原因
+  let recycled: RecycledItem[] = []
+  let staleObserving: Array<{ code: string; name: string; days: number; note: string }> = []
+  try {
+    const reconciled = reconcileObserving({ recommend: top, observing: observingTop })
+    recycled = reconciled.recycled
+    staleObserving = reconciled.stale
+  } catch {
+    /* 回流对账失败不影响推荐结果 */
+  }
+
   return {
     generatedAt: Date.now(),
     total: top.length,
@@ -678,5 +681,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     grouped,
     market,
     observing: observingTop,
+    recycled,
+    staleObserving,
   }
 }

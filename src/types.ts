@@ -865,7 +865,7 @@ export interface Jin10CalendarItem {
 }
 
 export type CandidateStatus = 'observe' | 'hold' | 'reject'
-export type CandidateSource = 'strategy' | 'fusion' | 'event' | 'opinion' | 'industry' | 'fund' | 'dragon' | 'manual'
+export type CandidateSource = 'strategy' | 'fusion' | 'event' | 'opinion' | 'industry' | 'fund' | 'dragon' | 'guard' | 'manual'
 
 export interface CandidateContext {
   reason?: string
@@ -1221,6 +1221,13 @@ export interface ReasonGuardState {
   trustedDimensions: string[]
 }
 
+export interface RecycledItem {
+  code: string
+  name: string
+  previousNote: string
+  currentNote: string
+}
+
 export interface RecommendationListResponse {
   generatedAt: number
   total: number
@@ -1228,6 +1235,8 @@ export interface RecommendationListResponse {
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
   market?: MarketTemperature
   observing: RecommendationRecord[]
+  recycled: RecycledItem[]
+  staleObserving: Array<{ code: string; name: string; days: number; note: string }>
 }
 
 export interface PerfBucket {

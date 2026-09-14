@@ -17,6 +17,12 @@ const error = ref('')
 const data = ref<RecommendationListResponse | null>(null)
 const selected = ref<RecommendationRecord | null>(null)
 const showObserving = ref(false)
+const showRecycled = ref(false)
+const staleMap = computed(() => {
+  const map: Record<string, number> = {}
+  for (const item of data.value?.staleObserving ?? []) map[item.code] = item.days
+  return map
+})
 const history = ref<StockHistoryResponse | null>(null)
 const historyLoading = ref(false)
 const historyError = ref('')
@@ -217,6 +223,21 @@ onMounted(() => void load())
 
     <div v-if="data" class="today-main">
       <div class="rec-table-wrap">
+        <div v-if="data.recycled?.length" class="recycle-strip">
+          <span class="recycle-title">回流 {{ data.recycled.length }}</span>
+          <span class="recycle-desc">
+            {{ data.recycled.map((r) => r.name).slice(0, 5).join('、') }} 此前被守卫拦下，今日条件已改善，已重新纳入推荐
+          </span>
+          <button class="observe-toggle" @click="showRecycled = !showRecycled">{{ showRecycled ? '收起' : '明细' }}</button>
+        </div>
+        <div v-if="showRecycled && data.recycled?.length" class="recycle-list">
+          <div v-for="item in data.recycled" :key="'rec' + item.code" class="recycle-item">
+            <b>{{ item.name }}</b>
+            <span class="recycle-from">此前：{{ item.previousNote || '命中准入守卫' }}</span>
+            <span class="recycle-to">现在：{{ item.currentNote }}</span>
+          </div>
+        </div>
+
         <div v-if="data.observing?.length" class="observe-strip">
           <span class="observe-title">观察名单 {{ data.observing.length }}</span>
           <span class="observe-desc">以下标的命中硬性拦截或冷理由，不列入推荐，已进入观察队列</span>
@@ -237,7 +258,10 @@ onMounted(() => void load())
               <span class="rec-code num">{{ item.code.toUpperCase() }}</span>
               <span class="style-tag">{{ STYLE_LABEL[item.style] }}</span>
             </div>
-            <div class="observe-note">{{ item.guard?.note || '命中准入守卫' }}</div>
+            <div class="observe-note">
+              {{ item.guard?.note || '命中准入守卫' }}
+              <span v-if="staleMap[item.code]" class="stale-tag">已连续 {{ staleMap[item.code] }} 天被拦，理由可能长期不成立</span>
+            </div>
             <div class="observe-price num" :class="(item.changePct ?? 0) >= 0 ? 'up' : 'down'">
               {{ fmt(item.price) }} {{ fmtPct(item.changePct) }}
             </div>
@@ -613,6 +637,22 @@ onMounted(() => void load())
 .price-main { font-size: 20px; font-weight: 700; }
 .drawer-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .drawer-section h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+.recycle-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(20,177,67,.07);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.recycle-title { font-weight: 600; color: var(--down); }
+.recycle-desc { color: var(--text-3); font-size: 11px; }
+.recycle-list { border-bottom: 1px solid var(--border); background: var(--panel-2); padding: 6px 12px; }
+.recycle-item { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 4px 0; font-size: 11px; }
+.recycle-from { color: var(--text-3); }
+.recycle-to { color: var(--down); }
+.stale-tag { margin-left: 6px; padding: 1px 6px; border-radius: 9px; background: rgba(239,35,42,.08); color: var(--down); font-size: 10px; }
 .observe-strip {
   display: flex;
   align-items: center;

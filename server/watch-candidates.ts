@@ -5,7 +5,7 @@
 import { readJson, writeJson } from './store.ts'
 
 export type CandidateStatus = 'observe' | 'hold' | 'reject'
-export type CandidateSource = 'strategy' | 'fusion' | 'event' | 'opinion' | 'industry' | 'fund' | 'dragon' | 'manual'
+export type CandidateSource = 'strategy' | 'fusion' | 'event' | 'opinion' | 'industry' | 'fund' | 'dragon' | 'guard' | 'manual'
 
 export interface CandidateContext {
   reason?: string
@@ -18,6 +18,12 @@ export interface CandidateContext {
   conditionsSummary?: string
   industry?: string
   note?: string
+  /** 连续被准入守卫拦截的天数 */
+  blockedDays?: number
+  lastBlockedAt?: number
+  /** 从观察名单回到推荐的时间 */
+  recycledAt?: number
+  recycleNote?: string
 }
 
 export interface SustainabilitySnapshot {
