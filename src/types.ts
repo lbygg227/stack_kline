@@ -1110,6 +1110,52 @@ export interface RecommendationVerification {
   conflicts: string[]
 }
 
+export type ReasonDimension = 'fundamental' | 'technical' | 'fund' | 'dragon' | 'event' | 'opinion' | 'industry'
+
+export interface RecommendationReason {
+  dimension: ReasonDimension
+  key: string
+  label: string
+  detail: string
+  weight: number
+  strength: number
+  metrics: Record<string, number | string>
+  expect: string
+  sources?: Array<{ authorName: string; platform: string; title: string; url: string; publishedAt: number }>
+}
+
+export interface ReasonSummary {
+  total: number
+  byDimension: Record<string, number>
+  topLabels: string[]
+  reasonScore: number
+}
+
+export interface FundamentalProfile {
+  industry?: string
+  peTtm?: number
+  peStatic?: number
+  pb?: number
+  roe?: number
+  revenueYi?: number
+  revenueYoy?: number
+  netProfitYi?: number
+  profitYoy?: number
+  grossMargin?: number
+  netMargin?: number
+  debtRatio?: number
+  mainNetInflowYi?: number
+  mainNetInflowPct?: number
+  mktcapYi?: number
+  industryPeMedian?: number
+  industryPePercentile?: number
+  valuationLabel?: string
+  growthLabel?: string
+  qualityLabel?: string
+  rating: 'strong' | 'neutral' | 'weak'
+  bullets: string[]
+}
+
 export interface RecommendationRecord {
   id: string
   code: string
@@ -1130,6 +1176,11 @@ export interface RecommendationRecord {
   industry?: string
   sources?: RecommendationSource[]
   verification?: RecommendationVerification
+  reasons?: RecommendationReason[]
+  reasonSummary?: ReasonSummary
+  fundamentals?: FundamentalProfile
+  appliedWeights?: { style: number; dimension: number; targetFactor: number; confidenceScale: number }
+  benchmark?: string
 }
 
 export interface MarketTemperature {
@@ -1151,6 +1202,13 @@ export interface RecommendationListResponse {
   market?: MarketTemperature
 }
 
+export interface PerfBucket {
+  count: number
+  winRate: number
+  averageReturnPct: number
+  averageExcessPct: number
+}
+
 export interface RecommendationOutcome {
   recommendationId: string
   code: string
@@ -1163,10 +1221,20 @@ export interface RecommendationOutcome {
   returnPct?: number
   maxGainPct?: number
   maxLossPct?: number
+  benchmarkReturnPct?: number
+  excessPct?: number
+  daysToPeak?: number
+  targetImpliedPct?: number
   hitTarget: boolean
   hitStop: boolean
   invalidated: boolean
   horizonDays: number
+  confidence?: number
+  score?: number
+  reasonScore?: number
+  verificationScore?: number
+  reasons: Array<{ dimension: string; key: string; label: string; weight: number; strength: number }>
+  dimensions: string[]
 }
 
 export interface RecommendationPerformanceStats {
@@ -1176,9 +1244,117 @@ export interface RecommendationPerformanceStats {
   skipped: number
   winRate: number
   averageReturnPct: number
-  byStyle: Record<string, { count: number; winRate: number; averageReturnPct: number }>
-  byChannel: Record<string, { count: number; winRate: number; averageReturnPct: number }>
+  averageExcessPct: number
+  byStyle: Record<string, PerfBucket>
+  byChannel: Record<string, PerfBucket>
   outcomes: RecommendationOutcome[]
+}
+
+export interface DimensionAttribution {
+  dimension: string
+  label: string
+  samples: number
+  directionHitRate: number
+  excessHitRate: number
+  averageReturnPct: number
+  averageExcessPct: number
+  averageMaxGainPct: number
+  averageMaxLossPct: number
+  verdict: '有效' | '一般' | '无效' | '样本不足'
+}
+
+export interface LabelAttribution {
+  dimension: string
+  label: string
+  samples: number
+  excessHitRate: number
+  averageReturnPct: number
+  averageExcessPct: number
+  weight: number
+}
+
+export interface CalibrationBucket {
+  bucket: string
+  samples: number
+  predictedWinRate: number
+  actualWinRate: number
+  gapPct: number
+  averageReturnPct: number
+}
+
+export interface AttributionBias {
+  samples: number
+  averageTargetImpliedPct: number
+  averageActualReturnPct: number
+  targetGapPct: number
+  targetHitRate: number
+  stopHitRate: number
+  averageMaxGainPct: number
+  averageMaxLossPct: number
+  averageDaysToPeak: number
+  averageHorizonDays: number
+  potentialGapPct: number
+  calibration: CalibrationBucket[]
+  expectedCalibrationError: number
+  calibrationGapPct: number
+}
+
+export interface RecommendationAttribution {
+  generatedAt: number
+  stats: {
+    totalRecords: number
+    matured: number
+    skipped: number
+    winRate: number
+    averageReturnPct: number
+    averageExcessPct: number
+  }
+  byStyle: Record<string, PerfBucket>
+  byChannel: Record<string, PerfBucket>
+  byDimension: DimensionAttribution[]
+  byLabel: LabelAttribution[]
+  resonance: Array<{ dimensions: number; samples: number; winRate: number; excessHitRate: number; averageReturnPct: number; averageExcessPct: number }>
+  bias: AttributionBias
+  dimensionWeights: Record<string, number>
+  targetFactor: number
+  confidenceScale: number
+  suggestions: string[]
+  outcomes: Array<{
+    code: string
+    name: string
+    style: string
+    signalDate: string
+    dimensions: string[]
+    reasonLabels: string[]
+    returnPct?: number
+    excessPct?: number
+    benchmarkReturnPct?: number
+    targetImpliedPct?: number
+    hitTarget: boolean
+    hitStop: boolean
+    confidence?: number
+    reasonScore?: number
+  }>
+}
+
+export interface WeightAdjustment {
+  at: number
+  scope: 'style' | 'dimension' | 'target' | 'confidence'
+  key: string
+  from: number
+  to: number
+  samples: number
+  reason: string
+}
+
+export interface RecommendationWeightState {
+  version: number
+  updatedAt: number
+  weights: Record<string, number>
+  dimensionWeights: Record<string, number>
+  targetFactor: number
+  confidenceScale: number
+  adjustments: WeightAdjustment[]
 }
 
 export interface SimulationPosition {
@@ -1243,19 +1419,6 @@ export interface BacktestMetricRecord {
     excessReturn: number
   }
   passed: boolean
-}
-
-export interface RecommendationOutcome {
-  recommendationId: string
-  signalDate: string
-  entryPrice?: number
-  maxGainPct?: number
-  maxLossPct?: number
-  endPrice?: number
-  returnPct?: number
-  hitTarget: boolean
-  hitStop: boolean
-  invalidated: boolean
 }
 
 export type BacktestableStyle = 'trend' | 'limit_up' | 'pullback'

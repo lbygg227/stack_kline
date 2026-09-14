@@ -35,6 +35,9 @@ import type {
   Quote,
   RecommendationListResponse,
   RecommendationPerformanceStats,
+  RecommendationAttribution,
+  RecommendationWeightState,
+  WeightAdjustment,
   SimulationSnapshot,
   StyleBacktestResult,
   ResearchDossier,
@@ -762,23 +765,42 @@ export async function fetchJin10Calendar(): Promise<{
   return (await res.json()) as { items: Array<Record<string, unknown>>; provider: string }
 }
 
-export async function fetchRecommendationWeights(): Promise<{ weights: Record<string, number> }> {
+export async function fetchRecommendationWeights(): Promise<{
+  weights: Record<string, number>
+  dimensionWeights: Record<string, number>
+  state: RecommendationWeightState
+}> {
   const res = await fetch('/api/recommendations/weights')
   if (!res.ok) throw new Error(`recommendation weights http ${res.status}`)
-  return (await res.json()) as { weights: Record<string, number> }
+  return (await res.json()) as { weights: Record<string, number>; dimensionWeights: Record<string, number>; state: RecommendationWeightState }
 }
 
-export async function refreshRecommendationWeights(): Promise<{
+export interface RecommendationWeightRefreshResult {
   weights: Record<string, number>
-  updatedAt: number
-  stats: { matured: number; winRate: number; averageReturnPct: number }
-}> {
+  dimensionWeights: Record<string, number>
+  targetFactor: number
+  confidenceScale: number
+  adjustments: WeightAdjustment[]
+  suggestions: string[]
+  stats: { matured: number; winRate: number; averageReturnPct: number; averageExcessPct: number }
+}
+
+export async function refreshRecommendationWeights(): Promise<RecommendationWeightRefreshResult> {
   const res = await fetch('/api/recommendations/weights', { method: 'POST' })
   if (!res.ok) {
     const err = (await res.json().catch(() => null)) as { error?: string } | null
     throw new Error(err?.error ?? `recommendation weights http ${res.status}`)
   }
-  return (await res.json()) as { weights: Record<string, number>; updatedAt: number; stats: { matured: number; winRate: number; averageReturnPct: number } }
+  return (await res.json()) as RecommendationWeightRefreshResult
+}
+
+export async function fetchRecommendationAttribution(): Promise<RecommendationAttribution> {
+  const res = await fetch('/api/recommendations/attribution')
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `recommendation attribution http ${res.status}`)
+  }
+  return (await res.json()) as RecommendationAttribution
 }
 
 export async function fetchSimulation(): Promise<SimulationSnapshot> {

@@ -34,6 +34,90 @@ const rankedItems = computed(() =>
   [...(data.value?.items ?? [])].sort((a, b) => b.confidence - a.confidence || b.score - a.score),
 )
 
+const DIMENSION_LABEL: Record<string, string> = {
+  fundamental: '基本面',
+  technical: '技术面',
+  fund: '资金面',
+  dragon: '龙虎榜',
+  event: '事件催化',
+  opinion: '博主观点',
+  industry: '行业板块',
+}
+
+const DIMENSION_ORDER = ['fundamental', 'fund', 'technical', 'industry', 'event', 'dragon', 'opinion']
+
+const METRIC_LABEL: Record<string, string> = {
+  peTtm: 'PE(TTM)',
+  pb: 'PB',
+  industryPeMedian: '行业PE中位',
+  pePercentile: '行业分位',
+  profitYoy: '净利同比',
+  revenueYoy: '营收同比',
+  netProfitYi: '净利润(亿)',
+  roe: 'ROE',
+  grossMargin: '毛利率',
+  netMargin: '净利率',
+  debtRatio: '负债率',
+  mainNetInflowYi: '主力净流入(亿)',
+  mainNetInflowPct: '主力占比',
+  changePct: '涨跌幅',
+  closePosition: '收盘位置',
+  volumeRatio: '量比',
+  turnover: '换手',
+  amountYi: '成交额(亿)',
+  edgePct: '板块超额',
+  industryAvgChangePct: '行业均值',
+  stockChangePct: '个股涨幅',
+  mainNetSumYi: '区间净流入(亿)',
+  mainNetTodayYi: '当日净流入(亿)',
+  consecutiveDays: '连续天数',
+  netValueYi: '净买额(亿)',
+  orgNetValueYi: '机构净买(亿)',
+  hotMoneyNetValueYi: '游资净买(亿)',
+  occurrences: '上榜次数',
+  conceptCount: '关联题材',
+  eventCount: '事件数',
+  authors: '博主数',
+  claims: '观点数',
+  agreement: '一致度',
+  riskCount: '风险条数',
+}
+
+const METRIC_SUFFIX: Record<string, string> = {
+  pePercentile: '%',
+  profitYoy: '%',
+  revenueYoy: '%',
+  roe: '%',
+  grossMargin: '%',
+  netMargin: '%',
+  debtRatio: '%',
+  mainNetInflowPct: '%',
+  changePct: '%',
+  closePosition: '%',
+  turnover: '%',
+  edgePct: 'pct',
+  industryAvgChangePct: '%',
+  stockChangePct: '%',
+  agreement: '%',
+}
+
+const reasonGroups = computed(() => {
+  const reasons = selected.value?.reasons ?? []
+  return DIMENSION_ORDER
+    .map((key) => ({ key, label: DIMENSION_LABEL[key] ?? key, items: reasons.filter((r) => r.dimension === key) }))
+    .filter((group) => group.items.length > 0)
+})
+
+function metricChips(metrics: Record<string, number | string> | undefined): string[] {
+  if (!metrics) return []
+  return Object.entries(metrics)
+    .filter(([, value]) => value !== 0 && value !== '' && value != null)
+    .slice(0, 5)
+    .map(([key, value]) => (METRIC_LABEL[key] ?? key) + ' ' + value + (METRIC_SUFFIX[key] ?? ''))
+}
+
+const RATING_LABEL: Record<string, string> = { strong: '基本面强', neutral: '基本面中性', weak: '基本面偏弱' }
+
 const evidenceGroups = computed(() => {
   const e = selected.value?.evidence
   if (!e) return []
@@ -118,6 +202,7 @@ onMounted(() => void load())
               <th class="num">目标</th>
               <th class="num">止损</th>
               <th class="num">周期</th>
+              <th>核心理由</th>
               <th>来源</th>
             </tr>
           </thead>
@@ -147,6 +232,10 @@ onMounted(() => void load())
               <td class="num">{{ fmt(item.levels.target) }}</td>
               <td class="num down">{{ fmt(item.levels.stopLoss) }}</td>
               <td class="num">{{ item.horizonDays }}日</td>
+              <td class="reason-cell">
+                <span v-for="label in (item.reasonSummary?.topLabels ?? []).slice(0, 2)" :key="label" class="reason-tag">{{ label }}</span>
+                <span v-if="!item.reasonSummary?.topLabels?.length" class="flat">--</span>
+              </td>
               <td class="channels">
                 <span v-for="c in item.channels" :key="c" class="channel-tag">{{ CHANNEL_LABEL[c] ?? c }}</span>
               </td>
@@ -182,8 +271,51 @@ onMounted(() => void load())
               </span>
             </div>
 
+            <section v-if="reasonGroups.length" class="drawer-section">
+              <h4>
+                推荐理由
+                <span v-if="selected.reasonSummary" class="reason-score">理由分 {{ selected.reasonSummary.reasonScore }}</span>
+              </h4>
+              <div v-for="group in reasonGroups" :key="group.key" class="reason-group">
+                <div class="reason-group-label">{{ group.label }}</div>
+                <div v-for="reason in group.items" :key="reason.key" class="reason-item">
+                  <div class="reason-head">
+                    <span class="reason-label">{{ reason.label }}</span>
+                    <span class="reason-weight num">权重 {{ Math.round(reason.weight * 100) }}% · 强度 {{ Math.round(reason.strength) }}</span>
+                  </div>
+                  <div class="reason-detail">{{ reason.detail }}</div>
+                  <div v-if="metricChips(reason.metrics).length" class="reason-metrics">
+                    <span v-for="chip in metricChips(reason.metrics)" :key="chip" class="metric-chip num">{{ chip }}</span>
+                  </div>
+                  <div class="reason-expect">验证口径：{{ reason.expect }}</div>
+                </div>
+              </div>
+            </section>
+
+            <section v-if="selected.fundamentals" class="drawer-section">
+              <h4>
+                基本面画像
+                <span class="fund-rating" :class="selected.fundamentals.rating">{{ RATING_LABEL[selected.fundamentals.rating] }}</span>
+              </h4>
+              <div class="fund-grid">
+                <div class="fund-cell"><span>PE(TTM)</span><b class="num">{{ fmt(selected.fundamentals.peTtm, 1) }}</b></div>
+                <div class="fund-cell"><span>行业中位</span><b class="num">{{ fmt(selected.fundamentals.industryPeMedian, 1) }}</b></div>
+                <div class="fund-cell"><span>行业分位</span><b class="num">{{ selected.fundamentals.industryPePercentile ?? '--' }}{{ selected.fundamentals.industryPePercentile ? '%' : '' }}</b></div>
+                <div class="fund-cell"><span>PB</span><b class="num">{{ fmt(selected.fundamentals.pb, 2) }}</b></div>
+                <div class="fund-cell"><span>ROE</span><b class="num">{{ fmt(selected.fundamentals.roe, 1) }}%</b></div>
+                <div class="fund-cell"><span>净利同比</span><b class="num">{{ fmt(selected.fundamentals.profitYoy, 1) }}%</b></div>
+                <div class="fund-cell"><span>营收同比</span><b class="num">{{ fmt(selected.fundamentals.revenueYoy, 1) }}%</b></div>
+                <div class="fund-cell"><span>毛利率</span><b class="num">{{ fmt(selected.fundamentals.grossMargin, 1) }}%</b></div>
+                <div class="fund-cell"><span>主力净流入</span><b class="num">{{ fmt(selected.fundamentals.mainNetInflowYi, 2) }}亿</b></div>
+                <div class="fund-cell"><span>总市值</span><b class="num">{{ fmt(selected.fundamentals.mktcapYi, 0) }}亿</b></div>
+              </div>
+              <ul class="fund-bullets">
+                <li v-for="(bullet, i) in selected.fundamentals.bullets" :key="i">{{ bullet }}</li>
+              </ul>
+            </section>
+
             <section v-if="evidenceGroups.length" class="drawer-section">
-              <h4>入选证据</h4>
+              <h4>通道原始证据</h4>
               <div v-for="g in evidenceGroups" :key="g.key" class="evidence-group">
                 <div class="evidence-label">{{ g.label }}</div>
                 <ul>
@@ -334,6 +466,16 @@ onMounted(() => void load())
   color: var(--text-3);
   font-size: 10px;
 }
+.reason-cell { max-width: 220px; white-space: normal; }
+.reason-tag {
+  display: inline-block;
+  margin: 1px 4px 1px 0;
+  padding: 1px 6px;
+  border-radius: 9px;
+  background: rgba(30,111,255,.08);
+  color: var(--primary);
+  font-size: 10px;
+}
 .conf { display: flex; align-items: center; gap: 6px; }
 .conf-track { width: 52px; height: 5px; border-radius: 3px; background: #e8edf5; overflow: hidden; }
 .conf-bar { height: 100%; background: linear-gradient(90deg, #1e6fff, #4d94ff); }
@@ -370,6 +512,48 @@ onMounted(() => void load())
 .price-main { font-size: 20px; font-weight: 700; }
 .drawer-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .drawer-section h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+.reason-score { margin-left: 6px; padding: 1px 7px; border-radius: 10px; background: rgba(30,111,255,.08); color: var(--primary); font-size: 11px; }
+.reason-group { margin-bottom: 10px; }
+.reason-group-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  margin-bottom: 4px;
+}
+.reason-item {
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-2);
+}
+.reason-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.reason-label { font-size: 12px; font-weight: 600; color: var(--text-1); }
+.reason-weight { font-size: 10px; color: var(--text-3); }
+.reason-detail { margin-top: 3px; font-size: 12px; line-height: 1.55; color: var(--text-2); }
+.reason-metrics { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.metric-chip {
+  padding: 1px 6px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  font-size: 10px;
+  color: var(--text-2);
+}
+.reason-expect { margin-top: 5px; font-size: 10px; line-height: 1.5; color: var(--text-3); }
+.fund-rating { margin-left: 6px; padding: 1px 7px; border-radius: 10px; font-size: 11px; background: var(--panel-2); color: var(--text-2); }
+.fund-rating.strong { color: var(--up); background: rgba(239,35,42,.07); }
+.fund-rating.weak { color: var(--down); background: rgba(20,177,67,.07); }
+.fund-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+  margin-bottom: 6px;
+}
+.fund-cell { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-3); }
+.fund-cell b { color: var(--text-1); }
+.fund-bullets { margin: 0; padding-left: 16px; }
+.fund-bullets li { font-size: 11px; line-height: 1.6; color: var(--text-2); }
 .evidence-group { margin-bottom: 8px; }
 .evidence-label { font-size: 11px; color: var(--text-3); margin-bottom: 3px; }
 .evidence-group ul, .invalid-list { margin: 0; padding-left: 16px; }
