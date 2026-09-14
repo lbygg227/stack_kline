@@ -10,7 +10,7 @@
 
 import { initNetwork } from './net.ts'
 import { readJson, writeJson } from './store.ts'
-import { buildSnapshotFromTickflow, fetchMarketSnapshot, type SnapshotStock } from './eastmoney.ts'
+import { buildSnapshotFromTickflow, fetchMarketSnapshot, mergeSlowVars, type SnapshotStock } from './eastmoney.ts'
 import { batchKlines } from './tencent.ts'
 import { runStrategy as executeStrategy } from './strategy.ts'
 import {
@@ -115,12 +115,12 @@ async function refreshSlowVars(): Promise<{ detail: string }> {
         const e = emMap.get(s.code)
         if (!e) return s
         updated++
-        return { ...s, pe: e.pe, pb: e.pb, volumeRatio: e.volumeRatio, mktcap: e.mktcap, nmc: e.nmc }
+        return mergeSlowVars(s, e)
       })
       writeJson('market-snapshot.json', snapshotState)
       archiveSnapshot(snapshotState)
     }
-    return { detail: `慢变量(PE/PB/量比/市值)刷新 ${em.length} 只` }
+    return { detail: `慢变量(估值/财务/资金)刷新 ${em.length} 只` }
   } catch (e) {
     // 东财不可达时静默降级，保留旧值
     return { detail: `慢变量刷新跳过（东财不可达，保留旧值）` }

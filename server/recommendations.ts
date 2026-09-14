@@ -10,7 +10,25 @@ import { buildFundStockReco } from './fund-stock-reco.ts'
 import { buildDragonTigerReco } from './dragon-tiger-stock-reco.ts'
 import { buildIndustryStats } from './screening-strategies.ts'
 import { readJson, writeJson } from './store.ts'
-import { getRecommendationWeights } from './recommendation-weights.ts'
+import {
+  getConfidenceScale,
+  getDimensionWeights,
+  getRecommendationWeights,
+  getTargetFactor,
+} from './recommendation-weights.ts'
+import { buildFundamentalProfile, buildIndustryValuation, type FundamentalProfile } from './fundamentals.ts'
+import {
+  dedupeReasons,
+  dragonReasons,
+  eventReasons,
+  fundReasons,
+  fundamentalReasons,
+  opinionReasons,
+  summarizeReasons,
+  technicalReasons,
+  type ReasonSummary,
+  type RecommendationReason,
+} from './recommendation-reasons.ts'
 
 export type RecommendationStyle = 'trend' | 'limit_up' | 'pullback' | 'leader' | 'event' | 'fund' | 'opinion'
 export type RecommendationChannel = 'technical' | 'event' | 'opinion' | 'fund' | 'dragon'
@@ -69,6 +87,20 @@ export interface RecommendationRecord {
   industry?: string
   sources?: RecommendationSource[]
   verification?: RecommendationVerification
+  /** 结构化推荐理由：每条都带具体数值与事后验证口径 */
+  reasons?: RecommendationReason[]
+  reasonSummary?: ReasonSummary
+  /** 推荐当时的基本面画像（估值/盈利/成长/质量/资金） */
+  fundamentals?: FundamentalProfile
+  /** 生成这条推荐时实际使用的权重，便于事后对账 */
+  appliedWeights?: {
+    style: number
+    dimension: number
+    targetFactor: number
+    confidenceScale: number
+  }
+  /** 持有期起点基准，用于回测归因（跑赢大盘） */
+  benchmark?: string
 }
 
 export interface MarketTemperature {
@@ -157,7 +189,8 @@ function saveRecommendationRecords(records: RecommendationRecord[]): void {
   for (const record of records) {
     const key = record.code + ':' + record.signalDate
     const old = map.get(key)
-    if (!old || record.score > old.score) map.set(key, record)
+    // 同一天同一只股票：优先保留分数更高的；若旧记录缺少结构化理由（早期版本），则用新记录覆盖
+    if (!old || record.score > old.score || (!old.reasons?.length && record.reasons?.length)) map.set(key, record)
   }
   const merged = [...map.values()].sort((a, b) => b.createdAt - a.createdAt).slice(0, 2000)
   writeJson(RECORD_FILE, { version: 1, records: merged } satisfies RecommendationRecordStore)
@@ -245,8 +278,10 @@ function makeRecord(input: {
   createdAt?: number
   sources?: RecommendationSource[]
   verification?: RecommendationVerification
+  reasons?: RecommendationReason[]
 }): RecommendationRecord {
   const evidenceKey = input.channel === 'technical' ? 'technical' : input.channel === 'event' ? 'event' : input.channel === 'opinion' ? 'opinion' : input.channel === 'fund' ? 'fund' : 'dragon'
+  const reasons = dedupeReasons(input.reasons ?? [])
   return {
     id: input.id,
     code: input.code.toLowerCase(),
@@ -267,6 +302,9 @@ function makeRecord(input: {
     industry: input.industry,
     sources: input.sources,
     verification: input.verification,
+    reasons: reasons.length ? reasons : undefined,
+    reasonSummary: reasons.length ? summarizeReasons(reasons) : undefined,
+    benchmark: 'sh000001',
   }
 }
 
@@ -306,6 +344,7 @@ function buildTechnicalRecords(stocks: SnapshotStock[]): RecommendationRecord[] 
       price: stock.price,
       changePct: stock.changePct,
       industry: stock.industry,
+      reasons: technicalReasons(stock, stats.get(stock.industry ?? '其他')),
     }))
   }
   return records
@@ -325,6 +364,7 @@ function buildEventRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
       price: item.price,
       changePct: item.changePct,
       industry: item.industry,
+      reasons: eventReasons({ headlines: item.headlines, eventCount: item.eventCount, source: item.source }),
     }),
   )
 }
@@ -341,6 +381,21 @@ function buildOpinionRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
       score: Math.round(Math.abs(item.score) * item.confidence),
       evidence: item.theses.slice(0, 3),
       industry: item.industry,
+      reasons: opinionReasons({
+        authors: item.authors,
+        claimCount: item.claimCount,
+        agreement: item.agreement,
+        confidence: item.confidence,
+        theses: item.theses,
+        risks: item.risks,
+        sources: (item.sources ?? []).map((s) => ({
+          authorName: s.authorName,
+          platform: s.platform,
+          title: s.title,
+          url: s.url,
+          publishedAt: s.publishedAt,
+        })),
+      }),
       sources: (item.sources ?? []).map((s) => ({
         documentId: s.documentId,
         claimId: s.claimId,
@@ -372,6 +427,7 @@ function buildFundRecords(): RecommendationRecord[] {
       price: item.price,
       changePct: item.changePct,
       industry: item.industry,
+      reasons: fundReasons(item),
     }),
   )
 }
@@ -389,6 +445,15 @@ function buildDragonRecords(): RecommendationRecord[] {
       evidence: [item.tradeDate + ' ' + item.boardType, '净买额 ' + (item.netValue / 1e8).toFixed(2) + '亿', ...item.concepts.slice(0, 2)],
       changePct: item.changePct ?? undefined,
       industry: item.industry,
+      reasons: dragonReasons({
+        netValue: item.netValue,
+        orgNetValue: item.orgNetValue,
+        hotMoneyNetValue: item.hotMoneyNetValue,
+        boardType: String(item.boardType),
+        concepts: item.concepts,
+        occurrences: item.occurrences,
+        tradeDates: item.tradeDates,
+      }),
     }),
   )
 }
@@ -405,6 +470,7 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
   const better = incoming.score > target.score
   const sources = [...(target.sources ?? []), ...(incoming.sources ?? [])]
   const verification = target.verification ?? incoming.verification
+  const reasons = dedupeReasons([...(target.reasons ?? []), ...(incoming.reasons ?? [])])
   return {
     ...target,
     channels,
@@ -420,7 +486,24 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
     invalidIf: better ? incoming.invalidIf : target.invalidIf,
     sources: sources.length ? sources : undefined,
     verification,
+    reasons: reasons.length ? reasons : undefined,
+    reasonSummary: reasons.length ? summarizeReasons(reasons) : undefined,
   }
+}
+
+/** 目标价系数：按历史实际达成幅度缩放目标价，避免系统性高估 */
+function applyTargetFactor(levels: RecommendationLevels, factor: number): RecommendationLevels {
+  if (!levels.entry || !levels.target || !Number.isFinite(factor) || factor === 1) return levels
+  const base = levels.target / levels.entry - 1
+  return { ...levels, target: Number((levels.entry * (1 + base * factor)).toFixed(2)) }
+}
+
+/** 记录理由维度的平均权重，作为置信度的维度修正 */
+function averageDimensionWeight(item: RecommendationRecord, dimensionWeights: Record<string, number>): number {
+  const dimensions = [...new Set((item.reasons ?? []).map((reason) => reason.dimension))]
+  if (!dimensions.length) return 1
+  const sum = dimensions.reduce((acc, dimension) => acc + (dimensionWeights[dimension] ?? 1), 0)
+  return Math.max(0.7, Math.min(1.3, sum / dimensions.length))
 }
 
 export function buildTodayRecommendations(stocks: SnapshotStock[], options: { coolingDays?: number } = {}): RecommendationListResponse {
@@ -439,18 +522,29 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
   }
 
   const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
+  const industryValuation = buildIndustryValuation(stocks)
+  const dimensionWeights = getDimensionWeights()
+  const targetFactor = getTargetFactor()
+  const confidenceScale = getConfidenceScale()
   for (const [code, item] of byCode) {
     const stock = stockMap.get(code)
     if (stock) {
       if (!item.price || item.price <= 0) item.price = stock.price
       if (item.changePct == null) item.changePct = stock.changePct
+      if (!item.industry) item.industry = stock.industry
+      // 基本面画像 + 基本面理由：所有通道的推荐都补齐「公司本身好不好」这一层
+      const { profile, signals } = buildFundamentalProfile(stock, industryValuation)
+      item.fundamentals = profile
+      const reasons = dedupeReasons([...(item.reasons ?? []), ...fundamentalReasons(signals)])
+      item.reasons = reasons.length ? reasons : undefined
+      item.reasonSummary = reasons.length ? summarizeReasons(reasons) : undefined
       if (!item.levels.entry || !item.levels.target || !item.levels.stopLoss) {
         item.levels = levelsFor(item.price, item.style)
       }
+      item.levels = applyTargetFactor(item.levels, targetFactor)
     }
     const verification = computeVerification(item, stock)
     item.verification = verification
-    item.confidence = Math.max(0, Math.min(100, Math.round(item.confidence * (0.4 + verification.score / 200))))
   }
 
   const history = loadHistory()
@@ -479,11 +573,26 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
   }
   const rawItems = eligible.sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
   const items = rawItems.map((item) => {
-    const weight = styleWeights[item.style] ?? 1
+    const styleWeight = styleWeights[item.style] ?? 1
+    const dimensionWeight = averageDimensionWeight(item, dimensionWeights)
+    // 证据分 = 通道分 6 : 理由分 4，理由越扎实、越具体，证据分越高
+    const reasonScore = item.reasonSummary?.reasonScore ?? item.score
+    const evidenceScore = Math.max(0, Math.min(100, Math.round(item.score * 0.6 + reasonScore * 0.4)))
+    const verificationScore = item.verification?.score ?? 50
+    const confidence = Math.max(
+      0,
+      Math.min(100, Math.round(evidenceScore * (0.4 + verificationScore / 200) * styleWeight * dimensionWeight * confidenceScale)),
+    )
     return {
       ...item,
-      score: Math.max(0, Math.min(100, Math.round(item.score * weight))),
-      confidence: Math.max(0, Math.min(100, Math.round(item.confidence * weight))),
+      score: Math.max(0, Math.min(100, Math.round(evidenceScore * styleWeight))),
+      confidence,
+      appliedWeights: {
+        style: Number(styleWeight.toFixed(3)),
+        dimension: Number(dimensionWeight.toFixed(3)),
+        targetFactor: Number(targetFactor.toFixed(3)),
+        confidenceScale: Number(confidenceScale.toFixed(3)),
+      },
     }
   }).sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
   const grouped: Record<RecommendationStyle, RecommendationRecord[]> = {
