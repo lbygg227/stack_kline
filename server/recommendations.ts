@@ -128,7 +128,7 @@ export interface RecommendationListResponse {
   observing: RecommendationRecord[]
 }
 
-function computeMarketTemperature(stocks: SnapshotStock[]): MarketTemperature {
+export function computeMarketTemperature(stocks: SnapshotStock[]): MarketTemperature {
   let up = 0
   let down = 0
   let limitUp = 0

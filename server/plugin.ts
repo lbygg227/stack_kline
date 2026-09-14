@@ -102,6 +102,14 @@ import {
 } from './recommendation-weights.ts'
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
 import { getReasonGuard } from './recommendation-guard.ts'
+import {
+  buildDailyDigest,
+  DailyDigestScheduler,
+  digestPushChannel,
+  getLatestDigest,
+  listDigests,
+  pushLatestDigest,
+} from './daily-digest.ts'
 import { buildStockRecommendationHistory } from './recommendation-history.ts'
 import { getSimulationSnapshot, resetSimulation, syncSimulation } from './simulation.ts'
 
@@ -177,6 +185,7 @@ export function marketDataPlugin(): Plugin {
   const eventCollectScheduler = new MarketEventCollectScheduler(20)
   const fundFlowScheduler = new FundFlowRankScheduler()
   const dragonTigerScheduler = new DragonTigerRankScheduler()
+  const digestScheduler = new DailyDigestScheduler()
   const configureApiServer = (server: ViteDevServer) => {
       attachRemoteTunnel(server)
       opinionScheduler.start(() => service.stocksWithIndustry())
@@ -191,11 +200,17 @@ export function marketDataPlugin(): Plugin {
       dragonTigerScheduler.start(() => ({
         stocks: service.stocksWithIndustry(),
       }))
+      digestScheduler.start(() => ({
+        stocks: service.stocksWithIndustry(),
+        loadBars: (code: string) => getKlineWithCache(code, 'day', 2000),
+        push: process.env.DAILY_DIGEST_AUTO_PUSH === '1',
+      }))
       server.httpServer?.once('close', () => {
         opinionScheduler.stop()
         eventCollectScheduler.stop()
         fundFlowScheduler.stop()
         dragonTigerScheduler.stop()
+        digestScheduler.stop()
       })
       server.middlewares.use(async (req, res, next) => {
         const path = (req.url ?? '/').split('?')[0]
@@ -247,6 +262,46 @@ export function marketDataPlugin(): Plugin {
               state: getRecommendationWeightState(),
               guard: getReasonGuard(),
             })
+          }
+          return
+        }
+
+        // ---- 每日复盘摘要 ----
+        if (path === '/api/digest') {
+          sendJson(res, 200, { digest: getLatestDigest(), channel: digestPushChannel(), autoPush: process.env.DAILY_DIGEST_AUTO_PUSH === '1' })
+          return
+        }
+
+        if (path === '/api/digest/history') {
+          sendJson(res, 200, { digests: listDigests(Number(url.searchParams.get('limit')) || 20) })
+          return
+        }
+
+        if (path === '/api/digest/generate' && req.method === 'POST') {
+          const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
+          if (!snap) {
+            sendJson(res, 409, { error: '快照尚未就绪，请稍候重试' })
+            return
+          }
+          try {
+            const digest = await buildDailyDigest({
+              stocks: service.stocksWithIndustry(),
+              loadBars: (code) => getKlineWithCache(code, 'day', 2000),
+              push: url.searchParams.get('push') === '1',
+            })
+            sendJson(res, 200, { digest, channel: digestPushChannel() })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/digest/push' && req.method === 'POST') {
+          try {
+            const result = await pushLatestDigest()
+            sendJson(res, result.pushed ? 200 : 400, { ...result, channel: digestPushChannel() })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
           return
         }

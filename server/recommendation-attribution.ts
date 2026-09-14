@@ -107,6 +107,8 @@ export interface RecommendationAttribution {
     name: string
     style: string
     signalDate: string
+    entryDate?: string
+    exitDate?: string
     dimensions: string[]
     reasonLabels: string[]
     returnPct?: number
@@ -373,6 +375,8 @@ export function summarizeAttribution(
       name: o.name,
       style: o.style,
       signalDate: o.signalDate,
+      entryDate: o.entryDate,
+      exitDate: o.exitDate,
       dimensions: o.dimensions,
       reasonLabels: o.reasons.map((r) => r.label),
       returnPct: o.returnPct,

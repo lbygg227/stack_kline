@@ -25,6 +25,8 @@ export interface RecommendationOutcome {
   style: string
   channels: string[]
   signalDate: string
+  entryDate?: string
+  exitDate?: string
   entryPrice?: number
   exitPrice?: number
   returnPct?: number
@@ -258,6 +260,8 @@ export async function buildRecommendationPerformance(
       style: record.style,
       channels: record.channels ?? [],
       signalDate: record.signalDate,
+      entryDate: dayOf(entryBar.timestamp),
+      exitDate: dayOf(exitBar.timestamp),
       entryPrice: entry,
       exitPrice: exit,
       returnPct,
