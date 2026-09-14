@@ -4,6 +4,9 @@ import type {
   BacktestResult,
   BatchAnalysisResponse,
   DailyDigest,
+  DigestChannel,
+  DigestPushConfig,
+  DigestPushLogEntry,
   DataCoverageResponse,
   FusionResult,
   KLineBar,
@@ -808,6 +811,61 @@ export async function fetchDailyDigest(): Promise<{ digest: DailyDigest | null; 
   const res = await fetch('/api/digest')
   if (!res.ok) throw new Error(`digest http ${res.status}`)
   return (await res.json()) as { digest: DailyDigest | null; channel: string | null; autoPush: boolean }
+}
+
+export interface DigestPushConfigResponse {
+  config: DigestPushConfig
+  effective: { channel: DigestChannel; source: 'config' | 'env' | 'none'; target: string }
+}
+
+export async function fetchDigestPushConfig(): Promise<DigestPushConfigResponse> {
+  const res = await fetch('/api/digest/push-config')
+  if (!res.ok) throw new Error(`digest push config http ${res.status}`)
+  return (await res.json()) as DigestPushConfigResponse
+}
+
+export async function saveDigestPushConfig(patch: Partial<DigestPushConfig> & { test?: boolean; clearPending?: boolean }): Promise<
+  DigestPushConfigResponse & { test: { pushed: boolean; channel?: string | null; error?: string } | null }
+> {
+  const res = await fetch('/api/digest/push-config', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `digest push config http ${res.status}`)
+  }
+  return (await res.json()) as DigestPushConfigResponse & { test: { pushed: boolean; channel?: string | null; error?: string } | null }
+}
+
+export async function retryDigestPush(): Promise<{
+  attempted: boolean
+  reason?: string
+  nextAttemptAt?: number
+  result?: { pushed: boolean; channel?: string | null; error?: string } | null
+  pending: DigestPushConfig['pending']
+  channel: string | null
+}> {
+  const res = await fetch('/api/digest/retry', { method: 'POST' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `digest retry http ${res.status}`)
+  }
+  return (await res.json()) as {
+    attempted: boolean
+    reason?: string
+    nextAttemptAt?: number
+    result?: { pushed: boolean; channel?: string | null; error?: string } | null
+    pending: DigestPushConfig['pending']
+    channel: string | null
+  }
+}
+
+export async function fetchDigestPushLog(limit = 30): Promise<DigestPushLogEntry[]> {
+  const res = await fetch(`/api/digest/push-log?limit=${limit}`)
+  if (!res.ok) throw new Error(`digest push log http ${res.status}`)
+  return ((await res.json()) as { logs: DigestPushLogEntry[] }).logs
 }
 
 export async function fetchDigestHistory(limit = 20): Promise<DailyDigest[]> {

@@ -1426,6 +1426,29 @@ export interface DigestSection {
   lines: string[]
 }
 
+export type DigestChannel = 'none' | 'webhook' | 'serverchan' | 'dingtalk' | 'feishu' | 'wecom'
+
+export interface DigestPushConfig {
+  version: number
+  updatedAt: number
+  channel: DigestChannel
+  target: string
+  hasTarget?: boolean
+  autoPush: boolean
+  maxAttempts: number
+  retryIntervalMinutes: number
+  pending?: { date: string; attempts: number; nextAttemptAt: number; lastError?: string } | null
+}
+
+export interface DigestPushLogEntry {
+  at: number
+  date: string
+  channel: string
+  ok: boolean
+  attempt: number
+  error?: string
+}
+
 export interface DailyDigest {
   date: string
   generatedAt: number
@@ -1440,7 +1463,7 @@ export interface DailyDigest {
     averageReturnPct: number
     averageExcessPct: number
   }
-  push: { pushed: boolean; channel?: string; error?: string }
+  push: { pushed: boolean; channel?: string | null; error?: string; retryScheduled?: boolean }
 }
 
 export interface WeightAdjustment {
