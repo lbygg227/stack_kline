@@ -12,6 +12,7 @@ import type {
   RecommendationAttribution,
   RecommendationPerformanceStats,
   RecommendationWeightState,
+  ReasonGuardState,
   StyleBacktestResult,
   WeightAdjustment,
 } from '../types'
@@ -34,6 +35,7 @@ const perfError = ref('')
 const weights = ref<Record<string, number>>({})
 const dimensionWeights = ref<Record<string, number>>({})
 const weightState = ref<RecommendationWeightState | null>(null)
+const guard = ref<ReasonGuardState | null>(null)
 const adjustments = ref<WeightAdjustment[]>([])
 const weightsLoading = ref(false)
 const weightsError = ref('')
@@ -90,6 +92,7 @@ async function loadWeights() {
     weights.value = res.weights
     dimensionWeights.value = res.dimensionWeights
     weightState.value = res.state
+    guard.value = res.guard
     adjustments.value = res.state.adjustments ?? []
   } catch (e) {
     weightsError.value = e instanceof Error ? e.message : String(e)
@@ -117,6 +120,7 @@ async function refreshWeights() {
     const result = await refreshRecommendationWeights()
     weights.value = result.weights
     dimensionWeights.value = result.dimensionWeights
+    guard.value = result.guard
     adjustments.value = result.adjustments
     if (result.adjustments.length === 0) weightsError.value = '样本不足或表现无显著变化，权重保持不变'
   } catch (e) {
@@ -347,6 +351,37 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
             <div class="metric"><span>平均见顶</span><b>第 {{ fmt(attr.bias.averageDaysToPeak, 1) }} 日</b></div>
           </div>
 
+          <div v-if="guard" class="attr-guard">
+            <h4>推荐准入守卫</h4>
+            <p class="bt-attr-tip">
+              冷理由（跑赢率 &lt; 40% 且样本 ≥ {{ guard.minSamples }}）出现即降级为观察名单；
+              硬性拦截（ST、资产负债率 ≥ 80%、当日主力净占比 ≤ -3%）直接不推荐，转入观察队列。
+            </p>
+            <div class="guard-cols">
+              <div>
+                <h5>冷理由（已拦截）</h5>
+                <ul v-if="guard.penalized.length">
+                  <li v-for="g in guard.penalized" :key="g.dimension + g.label">
+                    {{ g.label }} · {{ g.samples }} 样本 · 跑赢 {{ fmt(g.excessHitRate, 0) }}%
+                  </li>
+                </ul>
+                <p v-else class="guard-empty">
+                  暂无冷理由（每个理由需累计 {{ guard.minSamples }} 个成熟样本；维度整体跑赢率低于 40% 时整个维度判冷）
+                  <span v-if="guard.penalizedDimensions.length">；当前判冷维度：{{ guard.penalizedDimensions.join('、') }}</span>
+                </p>
+              </div>
+              <div>
+                <h5>可信理由（跑赢率 ≥ 60%）</h5>
+                <ul v-if="guard.trusted.length">
+                  <li v-for="g in guard.trusted" :key="g.dimension + g.label">
+                    {{ g.label }} · {{ g.samples }} 样本 · 跑赢 {{ fmt(g.excessHitRate, 0) }}%
+                  </li>
+                </ul>
+                <p v-else class="guard-empty">样本不足，暂无可信理由。</p>
+              </div>
+            </div>
+          </div>
+
           <div v-if="attr.suggestions.length" class="attr-suggestions">
             <h4>调整结论</h4>
             <ul>
@@ -525,6 +560,13 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
 .attr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 14px; }
 .attr-grid h4 { margin: 0; font-size: 13px; }
 .attr-sub { margin-top: 14px !important; }
+.attr-guard { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.attr-guard h4 { margin: 0 0 2px; font-size: 13px; }
+.attr-guard h5 { margin: 8px 0 4px; font-size: 12px; color: var(--text-2); }
+.guard-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.guard-cols ul { margin: 0; padding-left: 18px; }
+.guard-cols li { font-size: 11px; line-height: 1.7; color: var(--text-2); }
+.guard-empty { margin: 0; font-size: 11px; line-height: 1.7; color: var(--text-3); }
 .attr-suggestions { margin-top: 14px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-2); }
 .attr-suggestions h4 { margin: 0 0 6px; font-size: 13px; }
 .attr-suggestions ul { margin: 0; padding-left: 18px; }
@@ -548,5 +590,6 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
   .bt-row { grid-template-columns: 1fr 1fr; }
   .perf-breakdown { grid-template-columns: 1fr; }
   .attr-grid { grid-template-columns: 1fr; }
+  .guard-cols { grid-template-columns: 1fr; }
 }
 </style>

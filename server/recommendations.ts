@@ -17,6 +17,8 @@ import {
   getTargetFactor,
 } from './recommendation-weights.ts'
 import { buildFundamentalProfile, buildIndustryValuation, type FundamentalProfile } from './fundamentals.ts'
+import { evaluateRecordGuard, getReasonGuard, type GuardDecision } from './recommendation-guard.ts'
+import { upsertWatchCandidate } from './watch-candidates.ts'
 import {
   dedupeReasons,
   dragonReasons,
@@ -101,6 +103,8 @@ export interface RecommendationRecord {
   }
   /** 持有期起点基准，用于回测归因（跑赢大盘） */
   benchmark?: string
+  /** 准入守卫结论：observe 表示有反向证据或冷理由占比过高，只进观察队列 */
+  guard?: GuardDecision
 }
 
 export interface MarketTemperature {
@@ -120,6 +124,8 @@ export interface RecommendationListResponse {
   items: RecommendationRecord[]
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
   market?: MarketTemperature
+  /** 被守卫拦下、只做观察的标的（含拦截原因） */
+  observing: RecommendationRecord[]
 }
 
 function computeMarketTemperature(stocks: SnapshotStock[]): MarketTemperature {
@@ -523,6 +529,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
 
   const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
   const industryValuation = buildIndustryValuation(stocks)
+  const reasonGuard = getReasonGuard()
   const dimensionWeights = getDimensionWeights()
   const targetFactor = getTargetFactor()
   const confidenceScale = getConfidenceScale()
@@ -545,6 +552,20 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     }
     const verification = computeVerification(item, stock)
     item.verification = verification
+    item.guard = evaluateRecordGuard(
+      {
+        name: item.name,
+        style: item.style,
+        changePct: item.changePct,
+        reasons: (item.reasons ?? []).map((reason) => ({
+          dimension: reason.dimension,
+          label: reason.label,
+          weight: reason.weight,
+        })),
+        fundamentals: item.fundamentals,
+      },
+      reasonGuard,
+    )
   }
 
   const history = loadHistory()
@@ -595,6 +616,8 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
       },
     }
   }).sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
+  const observing = items.filter((item) => item.guard?.status === 'observe')
+  const recommendable = items.filter((item) => item.guard?.status !== 'observe')
   const grouped: Record<RecommendationStyle, RecommendationRecord[]> = {
     trend: [],
     limit_up: [],
@@ -605,7 +628,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     opinion: [],
   }
   const styleIndustryCount = new Map<string, Map<string, number>>()
-  for (const item of items) {
+  for (const item of recommendable) {
     const key = item.style
     const industry = item.industry ?? '其他'
     const counter = styleIndustryCount.get(key) ?? new Map<string, number>()
@@ -620,6 +643,28 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
   }
   const top = STYLE_KEYS.flatMap((key) => grouped[key]).sort((a, b) => b.score - a.score).slice(0, 80)
 
+  const observingTop = observing.slice(0, 20)
+  for (const item of observingTop) {
+    try {
+      upsertWatchCandidate({
+        code: item.code,
+        name: item.name,
+        industry: item.industry,
+        status: 'observe',
+        sources: ['manual'],
+        context: {
+          reason: item.thesis,
+          industry: item.industry,
+          recommendation: 'observe',
+          conditionsSummary: item.guard?.note,
+          note: '推荐守卫拦截：' + (item.guard?.note || ''),
+        },
+      })
+    } catch {
+      /* 代码格式异常时忽略 */
+    }
+  }
+
   for (const item of top) {
     history.lastRecommended[item.code] = signalDate
   }
@@ -632,5 +677,6 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     items: top,
     grouped,
     market,
+    observing: observingTop,
   }
 }

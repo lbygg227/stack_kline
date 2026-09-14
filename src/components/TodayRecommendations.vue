@@ -16,6 +16,7 @@ const loading = ref(false)
 const error = ref('')
 const data = ref<RecommendationListResponse | null>(null)
 const selected = ref<RecommendationRecord | null>(null)
+const showObserving = ref(false)
 const history = ref<StockHistoryResponse | null>(null)
 const historyLoading = ref(false)
 const historyError = ref('')
@@ -216,6 +217,32 @@ onMounted(() => void load())
 
     <div v-if="data" class="today-main">
       <div class="rec-table-wrap">
+        <div v-if="data.observing?.length" class="observe-strip">
+          <span class="observe-title">观察名单 {{ data.observing.length }}</span>
+          <span class="observe-desc">以下标的命中硬性拦截或冷理由，不列入推荐，已进入观察队列</span>
+          <button class="observe-toggle" @click="showObserving = !showObserving">
+            {{ showObserving ? '收起' : '展开' }}
+          </button>
+        </div>
+        <div v-if="showObserving && data.observing?.length" class="observe-list">
+          <div
+            v-for="item in data.observing"
+            :key="'obs' + item.id"
+            class="observe-item"
+            @click="selected = item"
+          >
+            <div class="observe-main">
+              <MarketBadge :code="item.code" />
+              <span class="rec-name">{{ item.name }}</span>
+              <span class="rec-code num">{{ item.code.toUpperCase() }}</span>
+              <span class="style-tag">{{ STYLE_LABEL[item.style] }}</span>
+            </div>
+            <div class="observe-note">{{ item.guard?.note || '命中准入守卫' }}</div>
+            <div class="observe-price num" :class="(item.changePct ?? 0) >= 0 ? 'up' : 'down'">
+              {{ fmt(item.price) }} {{ fmtPct(item.changePct) }}
+            </div>
+          </div>
+        </div>
         <table class="rec-table">
           <thead>
             <tr>
@@ -288,6 +315,15 @@ onMounted(() => void load())
             </div>
 
             <p class="drawer-thesis">{{ selected.thesis }}</p>
+
+            <div v-if="selected.guard && selected.guard.status === 'observe'" class="guard-banner observe">
+              <b>未列入推荐（观察名单）</b>
+              <span>{{ selected.guard.note }}</span>
+            </div>
+            <div v-else-if="selected.guard?.warnings?.length" class="guard-banner warn">
+              <b>风险提示</b>
+              <span>{{ selected.guard.warnings.join('；') }}</span>
+            </div>
 
             <div class="drawer-price">
               <span class="num price-main">{{ fmt(selected.price) }}</span>
@@ -577,6 +613,54 @@ onMounted(() => void load())
 .price-main { font-size: 20px; font-weight: 700; }
 .drawer-section { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 10px; }
 .drawer-section h4 { margin: 0 0 6px; font-size: 12px; color: var(--text-2); }
+.observe-strip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: rgba(250,173,20,.08);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.observe-title { font-weight: 600; color: #b7791f; }
+.observe-desc { color: var(--text-3); font-size: 11px; }
+.observe-toggle {
+  margin-left: auto;
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  font-size: 11px;
+  cursor: pointer;
+}
+.observe-list { border-bottom: 1px solid var(--border); background: var(--panel-2); }
+.observe-item {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 2fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 12px;
+  cursor: pointer;
+}
+.observe-item:hover { background: rgba(30,111,255,.05); }
+.observe-main { display: flex; align-items: center; gap: 6px; }
+.observe-note { color: #b7791f; font-size: 11px; }
+.observe-price { font-size: 12px; }
+.guard-banner {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 11px;
+  line-height: 1.6;
+}
+.guard-banner b { font-size: 12px; }
+.guard-banner.observe { background: rgba(250,173,20,.12); color: #b7791f; }
+.guard-banner.warn { background: rgba(30,111,255,.07); color: var(--text-2); }
 .history-state { font-size: 11px; color: var(--text-3); padding: 4px 0; }
 .history-verdict { margin: 0 0 6px; font-size: 12px; line-height: 1.6; color: var(--text-2); }
 .history-metrics { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }

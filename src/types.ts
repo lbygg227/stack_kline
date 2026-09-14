@@ -1181,6 +1181,7 @@ export interface RecommendationRecord {
   fundamentals?: FundamentalProfile
   appliedWeights?: { style: number; dimension: number; targetFactor: number; confidenceScale: number }
   benchmark?: string
+  guard?: GuardDecision
 }
 
 export interface MarketTemperature {
@@ -1194,12 +1195,39 @@ export interface MarketTemperature {
   riskOn: boolean
 }
 
+export interface GuardDecision {
+  status: 'recommend' | 'observe'
+  coldReasons: string[]
+  vetoes: string[]
+  warnings: string[]
+  note: string
+}
+
+export interface GuardedReason {
+  dimension: string
+  label: string
+  samples: number
+  excessHitRate: number
+  averageExcessPct: number
+}
+
+export interface ReasonGuardState {
+  version: number
+  updatedAt: number
+  minSamples: number
+  penalized: GuardedReason[]
+  trusted: GuardedReason[]
+  penalizedDimensions: string[]
+  trustedDimensions: string[]
+}
+
 export interface RecommendationListResponse {
   generatedAt: number
   total: number
   items: RecommendationRecord[]
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
   market?: MarketTemperature
+  observing: RecommendationRecord[]
 }
 
 export interface PerfBucket {

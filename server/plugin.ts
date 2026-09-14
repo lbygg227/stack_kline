@@ -101,6 +101,7 @@ import {
   refreshRecommendationWeights,
 } from './recommendation-weights.ts'
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
+import { getReasonGuard } from './recommendation-guard.ts'
 import { buildStockRecommendationHistory } from './recommendation-history.ts'
 import { getSimulationSnapshot, resetSimulation, syncSimulation } from './simulation.ts'
 
@@ -235,7 +236,7 @@ export function marketDataPlugin(): Plugin {
           if (req.method === 'POST') {
             try {
               const result = await refreshRecommendationWeights((code) => getKlineWithCache(code, 'day', 2000))
-              sendJson(res, 200, result)
+              sendJson(res, 200, { ...result, guard: getReasonGuard() })
             } catch (e) {
               sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
             }
@@ -244,8 +245,15 @@ export function marketDataPlugin(): Plugin {
               weights: getRecommendationWeights(),
               dimensionWeights: getDimensionWeights(),
               state: getRecommendationWeightState(),
+              guard: getReasonGuard(),
             })
           }
+          return
+        }
+
+        // ---- 推荐准入守卫（冷理由 / 反向证据） ----
+        if (path === '/api/recommendations/guard') {
+          sendJson(res, 200, getReasonGuard())
           return
         }
 

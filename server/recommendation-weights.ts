@@ -12,6 +12,7 @@
 import type { KLineBar } from './tencent.ts'
 import { readJson, writeJson } from './store.ts'
 import { buildRecommendationAttribution, MIN_SAMPLES, type RecommendationAttribution } from './recommendation-attribution.ts'
+import { refreshReasonGuard, type ReasonGuardState } from './recommendation-guard.ts'
 import { REASON_DIMENSIONS } from './recommendation-reasons.ts'
 
 const WEIGHT_FILE = 'recommendation-weights.json'
@@ -141,6 +142,8 @@ export interface RefreshResult {
   adjustments: WeightAdjustment[]
   suggestions: string[]
   stats: { matured: number; winRate: number; averageReturnPct: number; averageExcessPct: number }
+  /** 冷/热理由名单（准入守卫） */
+  guard: ReasonGuardState
 }
 
 /** 用最新归因结果刷新全部权重参数 */
@@ -238,6 +241,8 @@ export async function refreshRecommendationWeights(
   }
   writeJson(WEIGHT_FILE, state)
 
+  const guard = refreshReasonGuard(attribution)
+
   return {
     weights: state.weights,
     dimensionWeights: state.dimensionWeights,
@@ -245,6 +250,7 @@ export async function refreshRecommendationWeights(
     confidenceScale: state.confidenceScale,
     adjustments,
     suggestions: attribution.suggestions,
+    guard,
     stats: {
       matured: attribution.stats.matured,
       winRate: attribution.stats.winRate,

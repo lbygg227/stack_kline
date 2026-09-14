@@ -37,6 +37,7 @@ import type {
   RecommendationPerformanceStats,
   RecommendationAttribution,
   RecommendationWeightState,
+  ReasonGuardState,
   StockHistoryResponse,
   WeightAdjustment,
   SimulationSnapshot,
@@ -770,10 +771,16 @@ export async function fetchRecommendationWeights(): Promise<{
   weights: Record<string, number>
   dimensionWeights: Record<string, number>
   state: RecommendationWeightState
+  guard: ReasonGuardState
 }> {
   const res = await fetch('/api/recommendations/weights')
   if (!res.ok) throw new Error(`recommendation weights http ${res.status}`)
-  return (await res.json()) as { weights: Record<string, number>; dimensionWeights: Record<string, number>; state: RecommendationWeightState }
+  return (await res.json()) as {
+    weights: Record<string, number>
+    dimensionWeights: Record<string, number>
+    state: RecommendationWeightState
+    guard: ReasonGuardState
+  }
 }
 
 export interface RecommendationWeightRefreshResult {
@@ -784,6 +791,7 @@ export interface RecommendationWeightRefreshResult {
   adjustments: WeightAdjustment[]
   suggestions: string[]
   stats: { matured: number; winRate: number; averageReturnPct: number; averageExcessPct: number }
+  guard: ReasonGuardState
 }
 
 export async function refreshRecommendationWeights(): Promise<RecommendationWeightRefreshResult> {
