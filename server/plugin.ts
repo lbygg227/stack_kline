@@ -109,7 +109,18 @@ import {
   getLatestDigest,
   listDigests,
   pushLatestDigest,
+  retryPushNow,
 } from './daily-digest.ts'
+import {
+  getEffectiveChannel,
+  getMaskedPushConfig,
+  isAutoPushEnabled,
+  listPushLogs,
+  maskTarget,
+  savePushConfig,
+  sendTestMessage,
+  type DigestChannel,
+} from './digest-push.ts'
 import { buildStockRecommendationHistory } from './recommendation-history.ts'
 import { getSimulationSnapshot, resetSimulation, syncSimulation } from './simulation.ts'
 
@@ -203,7 +214,7 @@ export function marketDataPlugin(): Plugin {
       digestScheduler.start(() => ({
         stocks: service.stocksWithIndustry(),
         loadBars: (code: string) => getKlineWithCache(code, 'day', 2000),
-        push: process.env.DAILY_DIGEST_AUTO_PUSH === '1',
+        push: isAutoPushEnabled(),
       }))
       server.httpServer?.once('close', () => {
         opinionScheduler.stop()
@@ -278,7 +289,75 @@ export function marketDataPlugin(): Plugin {
 
         // ---- 每日复盘摘要 ----
         if (path === '/api/digest') {
-          sendJson(res, 200, { digest: getLatestDigest(), channel: digestPushChannel(), autoPush: process.env.DAILY_DIGEST_AUTO_PUSH === '1' })
+          sendJson(res, 200, {
+            digest: getLatestDigest(),
+            channel: digestPushChannel(),
+            autoPush: isAutoPushEnabled(),
+            config: getMaskedPushConfig(),
+          })
+          return
+        }
+
+        if (path === '/api/digest/push-config') {
+          if (req.method === 'GET') {
+            const effective = getEffectiveChannel()
+            sendJson(res, 200, {
+              config: getMaskedPushConfig(),
+              effective: { channel: effective.channel, source: effective.source, target: maskTarget(effective.target) },
+            })
+            return
+          }
+          if (req.method === 'POST' || req.method === 'PUT') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as {
+                channel?: DigestChannel
+                target?: string
+                autoPush?: boolean
+                maxAttempts?: number
+                retryIntervalMinutes?: number
+                test?: boolean
+                clearPending?: boolean
+              }
+              const saved = savePushConfig({
+                ...(body.channel ? { channel: body.channel } : {}),
+                ...(body.target !== undefined ? { target: body.target } : {}),
+                ...(body.autoPush !== undefined ? { autoPush: body.autoPush } : {}),
+                ...(body.maxAttempts !== undefined ? { maxAttempts: body.maxAttempts } : {}),
+                ...(body.retryIntervalMinutes !== undefined ? { retryIntervalMinutes: body.retryIntervalMinutes } : {}),
+                ...(body.clearPending ? { pending: null } : {}),
+              })
+              const testResult = body.test ? await sendTestMessage() : null
+              const effective = getEffectiveChannel()
+              sendJson(res, 200, {
+                config: { ...saved, target: maskTarget(saved.target) },
+                effective: { channel: effective.channel, source: effective.source, target: maskTarget(effective.target) },
+                test: testResult,
+              })
+            } catch (e) {
+              sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
+          return
+        }
+
+        if (path === '/api/digest/retry' && req.method === 'POST') {
+          try {
+            const outcome = await retryPushNow()
+            sendJson(res, 200, {
+              ...outcome,
+              pending: getMaskedPushConfig().pending ?? null,
+              channel: digestPushChannel(),
+            })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/digest/push-log') {
+          sendJson(res, 200, { logs: listPushLogs(Number(url.searchParams.get('limit')) || 50) })
           return
         }
 

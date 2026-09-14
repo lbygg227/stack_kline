@@ -8,6 +8,7 @@
 
 import type { KLineBar } from './tencent.ts'
 import { readJson, writeJson } from './store.ts'
+import { getEffectiveChannel, getPendingPush, pushDigestText, retryPendingPush } from './digest-push.ts'
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
 import { buildTodayRecommendations, type RecommendationListResponse } from './recommendations.ts'
 import { getConfidenceScale, getRecommendationWeightState, getTargetFactor } from './recommendation-weights.ts'
@@ -25,8 +26,10 @@ export interface DigestSection {
 
 export interface DigestPushResult {
   pushed: boolean
-  channel?: string
+  channel?: string | null
   error?: string
+  /** 是否已排入重试队列 */
+  retryScheduled?: boolean
 }
 
 export interface DailyDigest {
@@ -56,53 +59,10 @@ function todayString(now = Date.now()): string {
   return new Date(now).toISOString().slice(0, 10)
 }
 
-/** 推送渠道：按环境变量自动选择 */
-function resolveChannel(): { channel: string; url: string; body: (title: string, text: string) => unknown } | null {
-  const generic = process.env.DAILY_DIGEST_WEBHOOK
-  if (generic) {
-    return { channel: 'webhook', url: generic, body: (title, text) => ({ title, text }) }
-  }
-  const serverChan = process.env.SERVERCHAN_KEY
-  if (serverChan) {
-    return {
-      channel: 'serverchan',
-      url: 'https://sctapi.ftqq.com/' + serverChan + '.send',
-      body: (title, text) => ({ title, desp: text }),
-    }
-  }
-  const dingtalk = process.env.DINGTALK_WEBHOOK
-  if (dingtalk) {
-    return { channel: 'dingtalk', url: dingtalk, body: (_title, text) => ({ msgtype: 'text', text: { content: text } }) }
-  }
-  const feishu = process.env.FEISHU_WEBHOOK
-  if (feishu) {
-    return { channel: 'feishu', url: feishu, body: (_title, text) => ({ msg_type: 'text', content: { text } }) }
-  }
-  const wecom = process.env.WECOM_WEBHOOK
-  if (wecom) {
-    return { channel: 'wecom', url: wecom, body: (_title, text) => ({ msgtype: 'text', text: { content: text } }) }
-  }
-  return null
-}
-
+/** 当前生效的推送渠道（界面配置优先，其次 .env） */
 export function digestPushChannel(): string | null {
-  return resolveChannel()?.channel ?? null
-}
-
-async function send(text: string, title: string): Promise<DigestPushResult> {
-  const target = resolveChannel()
-  if (!target) return { pushed: false, error: '未配置推送渠道（DAILY_DIGEST_WEBHOOK / SERVERCHAN_KEY / DINGTALK_WEBHOOK / FEISHU_WEBHOOK / WECOM_WEBHOOK）' }
-  try {
-    const res = await fetch(target.url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(target.body(title, text)),
-    })
-    if (!res.ok) return { pushed: false, channel: target.channel, error: 'HTTP ' + res.status }
-    return { pushed: true, channel: target.channel }
-  } catch (e) {
-    return { pushed: false, channel: target.channel, error: e instanceof Error ? e.message : String(e) }
-  }
+  const channel = getEffectiveChannel().channel
+  return channel === 'none' ? null : channel
 }
 
 function renderText(digest: Omit<DailyDigest, 'text' | 'push'>): string {
@@ -224,7 +184,7 @@ export async function buildDailyDigest(input: {
     },
   }
   const text = renderText(base)
-  const push = input.push ? await send(text, 'A股研究复盘 ' + date) : { pushed: false as const }
+  const push: DigestPushResult = input.push ? await pushDigestText({ title: 'A股研究复盘 ' + date, text, date }) : { pushed: false }
   const digest: DailyDigest = { ...base, text, push }
   saveDigest(digest)
   return digest
@@ -245,6 +205,28 @@ export function listDigests(limit = 20): DailyDigest[] {
   const raw = readJson<{ version: 1; digests: DailyDigest[] }>(HISTORY_FILE)
   const digests = raw && Array.isArray(raw.digests) ? raw.digests : []
   return digests.slice(0, Math.max(1, Math.min(MAX_HISTORY, limit)))
+}
+
+export interface RetryOutcome {
+  attempted: boolean
+  reason?: string
+  nextAttemptAt?: number
+  result?: DigestPushResult | null
+}
+
+/** 立即尝试重试待推送（供界面「立即重试」与调度器共用） */
+export async function retryPushNow(): Promise<RetryOutcome> {
+  const pending = getPendingPush()
+  if (!pending) return { attempted: false, reason: '当前没有待重试的推送' }
+  if (Date.now() < pending.nextAttemptAt) {
+    return { attempted: false, reason: '尚未到重试时间', nextAttemptAt: pending.nextAttemptAt }
+  }
+  const result = await retryPendingPush((date) => {
+    const latest = getLatestDigest()
+    if (!latest || latest.date !== date) return null
+    return { title: 'A股研究复盘 ' + date, text: latest.text }
+  })
+  return { attempted: true, result }
 }
 
 /** 每个交易日收盘后自动生成（默认 15:05–16:30 窗口内触发一次） */
@@ -274,6 +256,8 @@ export class DailyDigestScheduler {
   }
 
   async tick(getContext: () => { stocks: SnapshotStock[]; loadBars: (code: string) => Promise<KLineBar[]>; push: boolean }) {
+    // 推送失败的重试不依赖时间窗，每分钟检查一次
+    await retryPushNow().catch(() => null)
     if (this.running || !this.inWindow()) return
     const date = todayString()
     if (this.lastDate === date) return
@@ -299,7 +283,7 @@ export class DailyDigestScheduler {
 export async function pushLatestDigest(): Promise<DigestPushResult> {
   const latest = getLatestDigest()
   if (!latest) return { pushed: false, error: '还没有生成过复盘摘要' }
-  const result = await send(latest.text, 'A股研究复盘 ' + latest.date)
+  const result = await pushDigestText({ title: 'A股研究复盘 ' + latest.date, text: latest.text, date: latest.date })
   saveDigest({ ...latest, push: result })
   return result
 }
