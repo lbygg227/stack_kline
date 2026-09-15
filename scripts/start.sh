@@ -51,7 +51,8 @@ warn() { printf '%s\n' "${C_YELLOW}!${C_RESET} $*"; }
 err()  { printf '%s\n' "${C_RED}✘${C_RESET} $*" >&2; }
 
 usage() {
-  sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'
+  # 打印文件头部的注释块（跳过 shebang，遇到第一行非注释即停止）
+  awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
 }
 
 # PID 与日志按端口隔离，支持同时跑多个实例（默认端口仍用 dev.pid / dev.log）
