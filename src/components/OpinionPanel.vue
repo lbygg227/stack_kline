@@ -1,8 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   analyzeOpinionDocument,
+  cancelOpinionBackfill,
   deleteOpinionSubscription,
+  fetchOpinionBackfill,
+  startOpinionBackfill,
   fetchOpinionDocuments,
   fetchOpinionSignals,
   fetchOpinionStockReco,
@@ -13,6 +16,7 @@ import {
   syncOpinionSubscription,
 } from '../api'
 import type {
+  OpinionBackfillState,
   OpinionDocument,
   OpinionPlatform,
   OpinionSignal,
@@ -53,6 +57,74 @@ const importing = ref(false)
 const syncingId = ref('')
 const analyzingId = ref('')
 const showResearch = ref(false)
+
+// ---- 历史回补 ----
+const backfill = ref<OpinionBackfillState | null>(null)
+const showBackfill = ref(false)
+const backfillSince = ref('2026-06-01')
+const backfillKinds = ref<Array<'answers' | 'articles' | 'pins'>>(['pins'])
+const backfillBusy = ref(false)
+let backfillTimer: number | undefined
+
+function toggleBackfillKind(kind: 'answers' | 'articles' | 'pins') {
+  const index = backfillKinds.value.indexOf(kind)
+  if (index >= 0) backfillKinds.value.splice(index, 1)
+  else backfillKinds.value.push(kind)
+}
+
+async function loadBackfill(silent = false) {
+  try {
+    backfill.value = await fetchOpinionBackfill()
+    if (!backfill.value.running && backfillTimer) {
+      window.clearInterval(backfillTimer)
+      backfillTimer = undefined
+      if (!silent) await load()
+    }
+  } catch (e) {
+    if (!silent) error.value = e instanceof Error ? e.message : String(e)
+  }
+}
+
+async function runBackfill() {
+  backfillBusy.value = true
+  error.value = ''
+  notice.value = ''
+  try {
+    if (!backfillKinds.value.length) throw new Error('至少选择一种内容类型')
+    backfill.value = await startOpinionBackfill({
+      sinceDate: backfillSince.value,
+      kinds: backfillKinds.value,
+      maxPages: 45,
+    })
+    notice.value = `已开始回补 ${backfillSince.value} 之后的内容，可在下方查看进度`
+    if (backfillTimer) window.clearInterval(backfillTimer)
+    backfillTimer = window.setInterval(() => void loadBackfill(true), 5000)
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    backfillBusy.value = false
+  }
+}
+
+async function stopBackfill() {
+  backfillBusy.value = true
+  try {
+    backfill.value = await cancelOpinionBackfill()
+    notice.value = '已发送取消请求，当前这批内容处理完后停止'
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    backfillBusy.value = false
+  }
+}
+
+onMounted(() => {
+  void loadBackfill(true)
+})
+
+onBeforeUnmount(() => {
+  if (backfillTimer) window.clearInterval(backfillTimer)
+})
 
 function backToMarket() {
   if (isMobile.value) setMobileTab('market')
@@ -276,6 +348,9 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
         <div class="op-subtitle">证据层 · 荐股请到选股页「观点驱动」</div>
       </div>
       <div class="op-head-actions">
+        <button class="btn" @click="showBackfill = !showBackfill">
+          历史回补<span v-if="backfill?.running" class="op-dot"></span>
+        </button>
         <button class="btn" @click="showResearch = true">观点回测</button>
         <button class="btn" :disabled="loading" @click="load">{{ loading ? '加载中…' : '刷新' }}</button>
       </div>
@@ -295,6 +370,66 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 
     <div v-if="error" class="op-message error">{{ error }}</div>
     <div v-if="notice" class="op-message notice">{{ notice }}</div>
+
+    <section v-if="showBackfill" class="op-card op-backfill">
+      <div class="op-backfill-head">
+        <b>按时间回补历史观点</b>
+        <span class="op-help-inline">观点有时效性：回补旧内容只用于回测博主可靠性，不会当作今日信号</span>
+      </div>
+      <div class="op-backfill-form">
+        <label>
+          起始日期
+          <input v-model="backfillSince" type="date" />
+        </label>
+        <div class="op-backfill-kinds">
+          <label><input type="checkbox" :checked="backfillKinds.includes('pins')" @change="toggleBackfillKind('pins')" /> 想法</label>
+          <label><input type="checkbox" :checked="backfillKinds.includes('answers')" @change="toggleBackfillKind('answers')" /> 回答</label>
+          <label><input type="checkbox" :checked="backfillKinds.includes('articles')" @change="toggleBackfillKind('articles')" /> 文章</label>
+        </div>
+        <div class="op-backfill-actions">
+          <button v-if="!backfill?.running" class="btn primary" :disabled="backfillBusy" @click="runBackfill">开始回补</button>
+          <button v-else class="btn" :disabled="backfillBusy" @click="stopBackfill">取消回补</button>
+          <button class="btn" :disabled="backfillBusy" @click="loadBackfill(false)">刷新状态</button>
+        </div>
+      </div>
+
+      <div v-if="backfill?.lastError" class="op-backfill-error">{{ backfill.lastError }}</div>
+
+      <div v-if="backfill && backfill.startedAt" class="op-backfill-progress">
+        <div class="op-backfill-sum">
+          <span>起始 {{ backfill.sinceDate }}</span>
+          <span>类型 {{ backfill.kinds.join(' / ') }}</span>
+          <span>取回 <b>{{ backfill.totals.fetched }}</b></span>
+          <span>新增入库 <b>{{ backfill.totals.created }}</b></span>
+          <span>已分析 <b>{{ backfill.totals.analyzed }}</b></span>
+          <span>失败 <b :class="backfill.totals.failed ? 'down' : ''">{{ backfill.totals.failed }}</b></span>
+          <span v-if="backfill.running" class="op-run">进行中</span>
+          <span v-else class="op-idle">{{ backfill.finishedAt ? '已结束' : '未在运行' }}</span>
+        </div>
+        <table class="op-backfill-table">
+          <thead><tr><th>博主</th><th>平台</th><th>状态</th><th>翻页</th><th>取回</th><th>入库</th><th>分析</th><th>失败</th></tr></thead>
+          <tbody>
+            <tr v-for="item in backfill.progress" :key="item.subscriptionId">
+              <td>{{ item.nickname }}</td>
+              <td>{{ item.platform === 'zhihu' ? '知乎' : '雪球' }}</td>
+              <td :class="item.status === 'failed' ? 'down' : item.status === 'done' ? 'up' : ''">
+                {{ item.status === 'pending' ? '待处理' : item.status === 'running' ? '进行中' : item.status === 'done' ? '完成' : item.status === 'failed' ? '失败' : '跳过' }}
+              </td>
+              <td>{{ item.kind ? item.kind + ' #' + (item.page ?? 1) : '—' }}</td>
+              <td>{{ item.fetched }}</td>
+              <td>{{ item.created }}</td>
+              <td>{{ item.analyzed }}</td>
+              <td>{{ item.failed }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <ul v-if="backfill.recent.length" class="op-backfill-log">
+          <li v-for="(log, i) in backfill.recent.slice(0, 8)" :key="i">
+            <span class="op-log-time">{{ new Date(log.at).toLocaleTimeString() }}</span>{{ log.text }}
+          </li>
+        </ul>
+      </div>
+    </section>
 
     <section class="op-reco">
       <div class="op-feed-title">
@@ -487,6 +622,31 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 .op-page { height: 100%; overflow: auto; background: var(--bg); }
 .op-head { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border); }
 .op-head-actions { margin-left: auto; display: flex; gap: 7px; }
+.op-dot { display: inline-block; width: 6px; height: 6px; margin-left: 5px; border-radius: 50%; background: var(--up); vertical-align: middle; }
+.op-backfill { margin: 10px 16px 0; padding: 12px 14px; }
+.op-backfill-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.op-backfill-head b { font-size: 13px; }
+.op-help-inline { font-size: 11px; color: var(--text-3); }
+.op-backfill-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; }
+.op-backfill-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-3); }
+.op-backfill-form input[type='date'] { padding: 5px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-2); }
+.op-backfill-kinds { display: flex; gap: 10px; font-size: 12px; color: var(--text-2); }
+.op-backfill-kinds label { flex-direction: row; align-items: center; gap: 4px; }
+.op-backfill-actions { display: flex; gap: 8px; margin-left: auto; }
+.op-backfill-actions .primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.op-backfill-error { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: rgba(239,35,42,.08); color: var(--down); font-size: 12px; }
+.op-backfill-progress { margin-top: 10px; }
+.op-backfill-sum { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: var(--text-3); margin-bottom: 6px; }
+.op-backfill-sum b { color: var(--text-1); }
+.op-run { color: var(--up); font-weight: 600; }
+.op-idle { color: var(--text-3); }
+.op-backfill-table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.op-backfill-table th, .op-backfill-table td { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+.op-backfill-table th:nth-child(-n+3), .op-backfill-table td:nth-child(-n+3) { text-align: left; }
+.op-backfill-table th { color: var(--text-3); font-weight: 600; }
+.op-backfill-log { margin: 8px 0 0; padding-left: 0; list-style: none; max-height: 150px; overflow-y: auto; }
+.op-backfill-log li { font-size: 11px; line-height: 1.7; color: var(--text-2); }
+.op-log-time { margin-right: 6px; color: var(--text-3); }
 .op-title { font-size: 16px; font-weight: 700; }
 .op-subtitle, .op-muted { color: var(--text-3); font-size: 11px; }
 .op-tabs { display: flex; gap: 6px; padding: 10px 14px 0; }

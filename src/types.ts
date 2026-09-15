@@ -1426,6 +1426,35 @@ export interface DigestSection {
   lines: string[]
 }
 
+export interface OpinionBackfillProgress {
+  subscriptionId: string
+  nickname: string
+  platform: string
+  status: 'pending' | 'running' | 'done' | 'failed' | 'skipped'
+  kind?: string
+  page?: number
+  fetched: number
+  created: number
+  analyzed: number
+  failed: number
+  error?: string
+}
+
+export interface OpinionBackfillState {
+  version: number
+  running: boolean
+  active: boolean
+  sinceDate: string
+  kinds: Array<'answers' | 'articles' | 'pins'>
+  startedAt: number
+  finishedAt?: number
+  totals: { fetched: number; created: number; analyzed: number; failed: number }
+  progress: OpinionBackfillProgress[]
+  recent: Array<{ at: number; text: string }>
+  lastError?: string
+  cancelRequested?: boolean
+}
+
 export type DigestChannel = 'none' | 'webhook' | 'serverchan' | 'dingtalk' | 'feishu' | 'wecom'
 
 export interface DigestPushConfig {

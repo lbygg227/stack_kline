@@ -26,6 +26,7 @@ import type {
   DragonTigerCacheEntry,
   DragonTigerRankStatus,
   DragonTigerRecoResponse,
+  OpinionBackfillState,
   OpinionBacktestConfig,
   OpinionBacktestResult,
   OpinionPlatform,
@@ -816,6 +817,40 @@ export async function fetchDailyDigest(): Promise<{ digest: DailyDigest | null; 
 export interface DigestPushConfigResponse {
   config: DigestPushConfig
   effective: { channel: DigestChannel; source: 'config' | 'env' | 'none'; target: string }
+}
+
+export async function fetchOpinionBackfill(): Promise<OpinionBackfillState> {
+  const res = await fetch('/api/opinions/backfill')
+  if (!res.ok) throw new Error(`opinion backfill http ${res.status}`)
+  return (await res.json()) as OpinionBackfillState
+}
+
+export async function startOpinionBackfill(body: {
+  sinceDate: string
+  kinds?: Array<'answers' | 'articles' | 'pins'>
+  subscriptionIds?: string[]
+  maxPages?: number
+}): Promise<OpinionBackfillState> {
+  const res = await fetch('/api/opinions/backfill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `opinion backfill http ${res.status}`)
+  }
+  return (await res.json()) as OpinionBackfillState
+}
+
+export async function cancelOpinionBackfill(): Promise<OpinionBackfillState> {
+  const res = await fetch('/api/opinions/backfill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cancel: true }),
+  })
+  if (!res.ok) throw new Error(`opinion backfill cancel http ${res.status}`)
+  return (await res.json()) as OpinionBackfillState
 }
 
 export async function fetchDigestPushConfig(): Promise<DigestPushConfigResponse> {
