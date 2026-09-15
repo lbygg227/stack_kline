@@ -4,6 +4,11 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "start": "bash scripts/start.sh",
+    "stop": "bash scripts/start.sh stop",
+    "restart": "bash scripts/start.sh restart",
+    "status": "bash scripts/start.sh status",
+    "health": "bash scripts/start.sh health",
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
     "test": "tsx --test server/*.test.ts",

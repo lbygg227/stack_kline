@@ -46,11 +46,48 @@
 
 ## 快速开始
 
+一条命令启动（自动检查 Node/依赖/.env → 后台启动 → 等待就绪 → 打印本机与公网地址）：
+
+```bash
+./scripts/start.sh          # 等价于 npm start
+```
+
+``text
+▸ 启动服务：npm run dev --port 5173
+▸ 等待服务就绪（最多 120s）…
+✔ 服务就绪（2s）
+▸ 等待公网隧道地址…
+
+================ 启动完成 ================
+  本机访问  http://127.0.0.1:5173/
+  公网访问  https://xxx.trycloudflare.com
+  日志      <项目>/.run/dev.log
+  停止      ./scripts/start.sh stop
+==========================================
+```
+
+其它命令：
+
+| 命令 | 说明 |
+| --- | --- |
+| `./scripts/start.sh` / `npm start` | 后台启动并返回访问地址（重复执行会识别“已在运行”） |
+| `./scripts/start.sh stop` / `npm run stop` | 停止服务（清理 vite、cloudflared 与本端口占用进程） |
+| `./scripts/start.sh restart` / `npm run restart` | 重启 |
+| `./scripts/start.sh status` / `npm run status` | 进程 / 端口 / 健康检查 / 隧道状态 |
+| `./scripts/start.sh health` / `npm run health` | 逐个探测关键接口（推荐、归因、权重、复盘、模拟盘） |
+| `./scripts/start.sh logs -f` | 查看/跟踪日志 |
+
+可选参数：`--port 5180`（换端口，PID 与日志按端口隔离，可同时跑多实例）、`--host`（监听 0.0.0.0，局域网/手机直连）、`--no-tunnel`（不建公网隧道）、`--force`（端口被占用时强制结束占用进程）、`--no-install`（缺依赖时不自动安装）、`--foreground`（前台运行）。
+
+手动方式（与上面等价）：
+
 ```bash
 npm install --cache /home/lby/code/.npm-cache   # 本机 npm 缓存受限时需指定缓存目录
 npm run dev
 # 本机打开 http://127.0.0.1:5173
 ```
+
+> 运行目录 `.run/`（pid + 日志）已在 `.gitignore` 中忽略；端口/监听地址也可用环境变量 `PORT` / `HOST` 覆盖。
 
 需要自动同步博主内容时，先复制环境变量模板：
 
