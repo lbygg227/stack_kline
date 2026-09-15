@@ -89,6 +89,7 @@ import {
   type OpinionPlatform,
 } from './opinions.ts'
 import { OpinionSyncScheduler, syncOpinionSubscription } from './opinion-sync.ts'
+import { cancelBackfill, getBackfillState, isBackfillRunning, startOpinionBackfill } from './opinion-backfill.ts'
 import { buildOpinionSignals } from './opinion-signals.ts'
 import { runOpinionBacktest } from './opinion-backtest.ts'
 import { buildTodayRecommendations } from './recommendations.ts'
@@ -1561,6 +1562,49 @@ export function marketDataPlugin(): Plugin {
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
+          return
+        }
+
+        // ---- 博主观点历史回补 ----
+        if (path === '/api/opinions/backfill') {
+          if (req.method === 'GET') {
+            sendJson(res, 200, { ...getBackfillState(), active: isBackfillRunning() })
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as {
+                sinceDate?: string
+                subscriptionIds?: string[]
+                kinds?: Array<'answers' | 'articles' | 'pins'>
+                maxPages?: number
+                cancel?: boolean
+              }
+              if (body.cancel) {
+                sendJson(res, 200, { cancelled: cancelBackfill(), ...getBackfillState() })
+                return
+              }
+              const sinceDate = (body.sinceDate ?? '').trim()
+              if (!/^\d{4}-\d{2}-\d{2}$/.test(sinceDate)) {
+                sendJson(res, 400, { error: 'sinceDate 需要 YYYY-MM-DD 格式' })
+                return
+              }
+              const state = startOpinionBackfill(
+                {
+                  sinceDate,
+                  subscriptionIds: body.subscriptionIds,
+                  kinds: body.kinds,
+                  maxPages: body.maxPages,
+                },
+                service.stocksWithIndustry(),
+              )
+              sendJson(res, 200, { ...state, active: true })
+            } catch (e) {
+              sendJson(res, 400, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
           return
         }
 

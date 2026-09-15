@@ -11,9 +11,21 @@ export interface OpinionFetchResult {
   profileUrl?: string
 }
 
+export interface OpinionHistoryOptions {
+  /** 只回补该日期（含）之后发布的内容，格式 YYYY-MM-DD */
+  sinceDate: string
+  /** 每种内容最多翻多少页 */
+  maxPages?: number
+  kinds?: Array<'answers' | 'articles' | 'pins'>
+  /** 每翻完一页回调一次，便于展示进度 */
+  onPage?: (info: { kind: string; page: number; items: number; reachedSince: boolean }) => void
+}
+
 export interface OpinionSourceAdapter {
   platform: OpinionPlatform
   fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult>
+  /** 按时间回补历史（可选能力）：忽略增量游标，逐页拉取到 sinceDate 为止 */
+  fetchHistory?(subscription: OpinionSubscription, options: OpinionHistoryOptions): Promise<OpinionFetchResult>
 }
 
 const stripHtml = (value: unknown): string =>
@@ -125,30 +137,67 @@ class ZhihuAdapter implements OpinionSourceAdapter {
     return JSON.parse(text) as Record<string, unknown>
   }
 
+  private async fetchPage(
+    token: string,
+    kind: 'answers' | 'articles' | 'pins',
+    page: number,
+  ): Promise<{ items: Array<Record<string, unknown>>; isEnd: boolean }> {
+    const offset = page * 20
+    const include = kind === 'answers'
+      ? 'data[*].is_normal,content,excerpt,created_time,updated_time,question,author'
+      : kind === 'articles'
+        ? 'data[*].content,excerpt,created,updated,title,author'
+        : 'data[*].content,created,updated,author,url,source_pin_id,repin_count'
+    const url = `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}/${kind}` +
+      `?include=${encodeURIComponent(include)}&offset=${offset}&limit=20&sort_by=created`
+    const json = await this.fetchJson(url, `https://www.zhihu.com/people/${token}`)
+    const data = Array.isArray(json.data) ? json.data as Array<Record<string, unknown>> : []
+    const paging = json.paging && typeof json.paging === 'object'
+      ? json.paging as Record<string, unknown>
+      : {}
+    // 注意：知乎会因为删帖/隐藏导致某页不足 20 条，但后面仍有数据，
+    // 因此只能用 paging.is_end 或空页判断结束，不能用 data.length < limit。
+    return { items: data, isEnd: data.length === 0 || paging.is_end === true }
+  }
+
   private async fetchPaged(
     token: string,
     kind: 'answers' | 'articles' | 'pins',
   ): Promise<Array<Record<string, unknown>>> {
     const items: Array<Record<string, unknown>> = []
     for (let page = 0; page < 2; page++) {
-      const offset = page * 20
-      const include = kind === 'answers'
-        ? 'data[*].is_normal,content,excerpt,created_time,updated_time,question,author'
-        : kind === 'articles'
-          ? 'data[*].content,excerpt,created,updated,title,author'
-          : 'data[*].content,created,updated,author,url,source_pin_id,repin_count'
-      const url = `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}/${kind}` +
-        `?include=${encodeURIComponent(include)}&offset=${offset}&limit=20&sort_by=created`
-      const json = await this.fetchJson(url, `https://www.zhihu.com/people/${token}`)
-      const data = Array.isArray(json.data) ? json.data as Array<Record<string, unknown>> : []
+      const { items: data, isEnd } = await this.fetchPage(token, kind, page)
       items.push(...data)
-      const paging = json.paging && typeof json.paging === 'object'
-        ? json.paging as Record<string, unknown>
-        : {}
-      if (data.length < 20 || paging.is_end === true) break
+      if (isEnd) break
       await new Promise((resolve) => setTimeout(resolve, 200))
     }
     return items
+  }
+
+  /** 解析订阅对应的知乎用户标识与昵称 */
+  private async resolveMember(subscription: OpinionSubscription): Promise<{
+    token: string
+    nickname: string
+    memberId: string
+    profileUrl: string
+  }> {
+    const token = subscription.platformUserId || subscription.profileUrl.match(/\/people\/([^/?#]+)/)?.[1] || ''
+    if (!token) throw new Error('知乎订阅缺少主页用户标识')
+    const profileUrl = `https://www.zhihu.com/people/${token}`
+    let nickname = subscription.nickname.trim()
+    let memberId = token
+    try {
+      const member = await this.fetchJson(
+        `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}?include=allow_message,headline`,
+        profileUrl,
+      )
+      nickname = String(member.name ?? nickname).trim() || nickname
+      memberId = String(member.id ?? token)
+    } catch {
+      if (!nickname) nickname = token
+    }
+    if (!nickname) throw new Error('知乎用户信息不完整，无法确认内容作者')
+    return { token, nickname, memberId, profileUrl }
   }
 
   private extractInitialEntities(html: string): {
@@ -325,22 +374,7 @@ class ZhihuAdapter implements OpinionSourceAdapter {
   }
 
   async fetchLatest(subscription: OpinionSubscription): Promise<OpinionFetchResult> {
-    const token = subscription.platformUserId || subscription.profileUrl.match(/\/people\/([^/?#]+)/)?.[1] || ''
-    if (!token) throw new Error('知乎订阅缺少主页用户标识')
-    const profileUrl = `https://www.zhihu.com/people/${token}`
-    let nickname = subscription.nickname.trim()
-    let memberId = token
-    try {
-      const member = await this.fetchJson(
-        `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}?include=allow_message,headline`,
-        profileUrl,
-      )
-      nickname = String(member.name ?? nickname).trim() || nickname
-      memberId = String(member.id ?? token)
-    } catch {
-      if (!nickname) nickname = token
-    }
-    if (!nickname) throw new Error('知乎用户信息不完整，无法确认内容作者')
+    const { token, nickname, memberId, profileUrl } = await this.resolveMember(subscription)
 
     const documents: OpinionDocumentInput[] = []
     const cookie = process.env.ZHIHU_COOKIE?.trim()
@@ -406,6 +440,54 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       profileUrl,
     }
   }
+
+  /**
+   * 按时间回补：忽略增量游标，逐页翻到早于 sinceDate 为止。
+   * 想法的分页深度远大于回答/文章，是回补的主要目标。
+   */
+  async fetchHistory(
+    subscription: OpinionSubscription,
+    options: OpinionHistoryOptions,
+  ): Promise<OpinionFetchResult> {
+    const { token, nickname, memberId, profileUrl } = await this.resolveMember(subscription)
+    const cookie = process.env.ZHIHU_COOKIE?.trim()
+    if (!cookie) throw new Error('缺少 ZHIHU_COOKIE，无法回补知乎历史内容')
+    const sinceTime = Date.parse(options.sinceDate + 'T00:00:00+08:00')
+    const maxPages = Math.max(1, Math.min(80, options.maxPages ?? 40))
+    const kinds = options.kinds?.length ? options.kinds : (['answers', 'articles', 'pins'] as const)
+    const documents: OpinionDocumentInput[] = []
+
+    for (const kind of kinds) {
+      const mapKind = kind === 'answers' ? 'answer' : kind === 'pins' ? 'pin' : 'article'
+      for (let page = 0; page < maxPages; page++) {
+        const { items, isEnd } = await this.fetchPage(token, kind, page)
+        if (!items.length) {
+          options.onPage?.({ kind, page, items: 0, reachedSince: true })
+          break
+        }
+        for (const item of items) {
+          const doc = this.toDocument(subscription, token, nickname, memberId, item, mapKind)
+          if (doc) documents.push(doc)
+        }
+        const created = items
+          .map((item) => numberTime(item.created_time ?? item.created ?? item.updated_time ?? item.updated ?? item.EditTime))
+          .filter((time) => time > 0)
+        const oldest = created.length ? Math.min(...created) : 0
+        const reachedSince = oldest > 0 && oldest < sinceTime
+        options.onPage?.({ kind, page, items: items.length, reachedSince })
+        if (reachedSince || isEnd) break
+        await new Promise((resolve) => setTimeout(resolve, 700))
+      }
+    }
+
+    documents.sort((a, b) => (b.publishedAt ?? 0) - (a.publishedAt ?? 0))
+    return {
+      documents: documents.filter((doc) => (doc.publishedAt ?? 0) >= sinceTime),
+      platformUserId: token,
+      nickname,
+      profileUrl,
+    }
+  }
 }
 
 class XueqiuAdapter implements OpinionSourceAdapter {
@@ -456,6 +538,72 @@ class XueqiuAdapter implements OpinionSourceAdapter {
       userId,
       nickname: String(exact?.screen_name ?? exact?.name ?? nickname),
       profileUrl: `https://xueqiu.com/u/${userId}`,
+    }
+  }
+
+  /** 按时间回补：雪球时间线分页翻到早于 sinceDate 为止 */
+  async fetchHistory(
+    subscription: OpinionSubscription,
+    options: OpinionHistoryOptions,
+  ): Promise<OpinionFetchResult> {
+    const user = await this.resolveUser(subscription)
+    const sinceTime = Date.parse(options.sinceDate + 'T00:00:00+08:00')
+    const maxPages = Math.max(1, Math.min(80, options.maxPages ?? 30))
+    const statuses: Array<Record<string, unknown>> = []
+    for (let page = 1; page <= maxPages; page++) {
+      const url = new URL('https://api.xueqiu.com/v4/statuses/user_timeline.json')
+      url.searchParams.set('user_id', user.userId)
+      url.searchParams.set('type', '0')
+      url.searchParams.set('page', String(page))
+      url.searchParams.set('count', '20')
+      const res = await fetch(url, { headers: this.headers(user.profileUrl) })
+      if (!res.ok) throw new Error(`雪球时间线 ${res.status}`)
+      const json = await res.json() as Record<string, unknown>
+      if (json.error_code) throw new Error(String(json.error_description ?? `雪球错误 ${json.error_code}`))
+      const raw = json.statuses ?? json.list ?? []
+      const pageItems = Array.isArray(raw) ? raw as Array<Record<string, unknown>> : []
+      if (!pageItems.length) {
+        options.onPage?.({ kind: 'statuses', page, items: 0, reachedSince: true })
+        break
+      }
+      statuses.push(...pageItems)
+      const oldest = Math.min(
+        ...pageItems
+          .map((status) => numberTime(status.created_at ?? status.updated_at))
+          .filter((time) => time > 0),
+      )
+      const reachedSince = Number.isFinite(oldest) && oldest < sinceTime
+      options.onPage?.({ kind: 'statuses', page, items: pageItems.length, reachedSince })
+      if (reachedSince) break
+      await new Promise((resolve) => setTimeout(resolve, 600))
+    }
+
+    return {
+      platformUserId: user.userId,
+      nickname: user.nickname,
+      profileUrl: user.profileUrl,
+      documents: statuses.flatMap((status) => {
+        const statusId = String(status.id ?? status.status_id ?? '')
+        const rawUser = status.user as Record<string, unknown> | undefined
+        const normalized = normalizeXueqiuStatus(status, user.userId)
+        const publishedAt = numberTime(status.created_at ?? status.updated_at)
+        if (!normalized || !statusId || publishedAt < sinceTime) return []
+        return [{
+          subscriptionId: subscription.id,
+          platform: this.platform,
+          platformPostId: statusId,
+          authorId: user.userId,
+          authorName: String(rawUser?.screen_name ?? user.nickname),
+          profileUrl: user.profileUrl,
+          url: String(status.target ? `https://xueqiu.com${status.target}` : `https://xueqiu.com/${user.userId}/${statusId}`),
+          title: stripHtml(status.title) || stripHtml(status.description).slice(0, 50) || `${user.nickname}的动态`,
+          content: normalized.content,
+          publishedAt,
+          contentKind: normalized.contentKind,
+          originalAuthor: normalized.originalAuthor,
+          collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
+        }]
+      }),
     }
   }
 
