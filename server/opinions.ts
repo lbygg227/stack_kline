@@ -356,7 +356,8 @@ export function listOpinionDocuments(filters: {
     .filter((document) => !filters.subscriptionId || document.subscriptionId === filters.subscriptionId)
     .filter((document) => !filters.code || document.claims.some((claim) => claim.code === filters.code))
     .sort((a, b) => b.publishedAt - a.publishedAt)
-    .slice(0, Math.max(1, Math.min(500, filters.limit ?? 100)))
+    // 上限放宽到 5000：观点回测需要覆盖全量历史（回补后单平台可达数千篇）
+    .slice(0, Math.max(1, Math.min(5000, filters.limit ?? 100)))
 }
 
 export function getOpinionDocument(id: string): OpinionDocument | null {

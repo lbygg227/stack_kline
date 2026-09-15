@@ -1,6 +1,8 @@
 import type { KLineBar } from './tencent.ts'
 import type { OpinionDocument, OpinionPlatform, OpinionStance } from './opinions.ts'
 
+export type OpinionDocumentKind = 'answer' | 'article' | 'pin' | 'manual'
+
 export interface OpinionBacktestConfig {
   platform?: OpinionPlatform
   subscriptionId?: string
@@ -8,6 +10,17 @@ export interface OpinionBacktestConfig {
   endDate?: string
   holdingDays?: number
   benchmarkCode: string
+  /** 只统计某几类内容：想法(pin) 与长文(answer/article) 可以分开评估 */
+  kinds?: OpinionDocumentKind[]
+}
+
+/** 从 platformPostId 推断内容类型 */
+export function documentKindOf(document: { platformPostId?: string }): OpinionDocumentKind {
+  const id = String(document.platformPostId ?? '')
+  if (id.startsWith('pin:')) return 'pin'
+  if (id.startsWith('answer:')) return 'answer'
+  if (id.startsWith('article:')) return 'article'
+  return 'manual'
 }
 
 export interface OpinionBacktestEvent {
@@ -138,11 +151,17 @@ export async function runOpinionBacktest(
     benchmarkCode: /^(sh|sz)\d{6}$/.test(rawConfig.benchmarkCode ?? '')
       ? rawConfig.benchmarkCode!
       : 'sh000300',
+    kinds: Array.isArray(rawConfig.kinds) && rawConfig.kinds.length
+      ? rawConfig.kinds.filter((kind): kind is OpinionDocumentKind =>
+          kind === 'answer' || kind === 'article' || kind === 'pin' || kind === 'manual')
+      : undefined,
   }
+  const kindSet = config.kinds?.length ? new Set(config.kinds) : null
   const selected = documents
     .filter((document) => document.status === 'analyzed')
     .filter((document) => !config.platform || document.platform === config.platform)
     .filter((document) => !config.subscriptionId || document.subscriptionId === config.subscriptionId)
+    .filter((document) => !kindSet || kindSet.has(documentKindOf(document)))
   const claims = selected.flatMap((document) =>
     document.claims
       .filter((claim) => claim.code && claim.stance !== 'neutral')

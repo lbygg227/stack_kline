@@ -72,7 +72,7 @@ export function getBackfillState(): BackfillState {
   const raw = readJson<BackfillState>(STATE_FILE)
   if (!raw || raw.version !== 1) return emptyState('', ['pins'])
   // 服务重启会让内存里的任务消失：状态文件里 running=true 但实际没有任务时标记为已中断
-  if (raw.running && !activeTask) {
+  if (raw.running && !jobActive) {
     return { ...raw, running: false, lastError: raw.lastError ?? '上一次回补被服务重启中断，可重新发起（已入库内容不会重复分析）' }
   }
   return raw
@@ -107,10 +107,11 @@ export interface StartBackfillOptions {
   maxPages?: number
 }
 
-let activeTask: Promise<void> | null = null
+/** 任务体内部读取状态时 activeTask 可能还没赋值，用布尔量判断更可靠 */
+let jobActive = false
 
 export function isBackfillRunning(): boolean {
-  return activeTask !== null
+  return jobActive
 }
 
 export function cancelBackfill(): boolean {
@@ -125,7 +126,7 @@ export function cancelBackfill(): boolean {
  * 状态可通过 getBackfillState() 查询；同一时间只允许一个任务。
  */
 export function startOpinionBackfill(options: StartBackfillOptions, stocks: SnapshotStock[]): BackfillState {
-  if (activeTask) throw new Error('已有回补任务在运行')
+  if (jobActive) throw new Error('已有回补任务在运行')
   const kinds = options.kinds?.length ? options.kinds : (['pins'] as const)
   const state = emptyState(options.sinceDate, [...kinds])
   const subscriptions = listOpinionSubscriptions().filter((subscription) =>
@@ -133,6 +134,7 @@ export function startOpinionBackfill(options: StartBackfillOptions, stocks: Snap
   )
   if (!subscriptions.length) throw new Error('没有匹配的订阅')
   state.running = true
+  jobActive = true
   state.startedAt = Date.now()
   state.progress = subscriptions.map((subscription) => ({
     subscriptionId: subscription.id,
@@ -147,7 +149,7 @@ export function startOpinionBackfill(options: StartBackfillOptions, stocks: Snap
   pushRecent(state, '开始回补 ' + options.sinceDate + ' 之后的 ' + kinds.join('/'))
   saveState(state)
 
-  activeTask = (async () => {
+  void (async () => {
     try {
       for (const subscription of subscriptions) {
         const live = getBackfillState()
@@ -260,7 +262,7 @@ export function startOpinionBackfill(options: StartBackfillOptions, stocks: Snap
       final.cancelRequested = false
       pushRecent(final, '回补结束：新增入库 ' + final.totals.created + ' 篇，分析 ' + final.totals.analyzed + ' 篇')
       saveState(final)
-      activeTask = null
+      jobActive = false
     }
   })()
 

@@ -1491,11 +1491,12 @@ export function marketDataPlugin(): Plugin {
               endDate?: string
               holdingDays?: number
               benchmarkCode?: string
+              kinds?: Array<'answer' | 'article' | 'pin' | 'manual'>
             }
             const documents = listOpinionDocuments({
               platform: body.platform,
               subscriptionId: body.subscriptionId,
-              limit: 500,
+              limit: 5000,
             })
             const result = await runOpinionBacktest(
               documents,
