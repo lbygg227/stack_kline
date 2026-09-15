@@ -213,6 +213,17 @@ export interface RawOpinionClaim {
   evidenceQuote?: string
 }
 
+/** 容错解析：去掉 markdown 围栏后再解析 */
+function parseJsonLoose(raw: string): { summary?: string; claims?: unknown } | null {
+  const text = raw.trim().replace(/^\`\`\`(?:json)?/i, '').replace(/\`\`\`$/, '').trim()
+  if (!text) return null
+  try {
+    return JSON.parse(text) as { summary?: string; claims?: unknown }
+  } catch {
+    return null
+  }
+}
+
 export async function extractOpinionDocument(input: {
   title: string
   content: string
@@ -221,7 +232,7 @@ export async function extractOpinionDocument(input: {
 }): Promise<{ summary: string; claims: RawOpinionClaim[]; model: string }> {
   const system = `你是财经观点信息抽取器。只根据输入原文提取作者明确表达的观点，不补充外部知识。
 必须保留能在原文中逐字找到的短引用作为 evidenceQuote。没有明确标的或方向时可以返回空 claims。`
-  const user = `请输出 JSON：
+  const buildUser = (extraRule: string) => `请输出 JSON：
 {
   "summary": "100字内客观摘要",
   "claims": [{
@@ -243,36 +254,49 @@ export async function extractOpinionDocument(input: {
 发布时间：${new Date(input.publishedAt).toISOString()}
 标题：${input.title}
 原文：
-${input.content.slice(0, 18_000)}`
-  const res = await fetch(DEEPSEEK_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${DEEPSEEK_KEY}`,
-    },
-    body: JSON.stringify({
-      model: 'deepseek-chat',
-      messages: [
-        { role: 'system', content: system },
-        { role: 'user', content: user },
-      ],
-      response_format: { type: 'json_object' },
-      temperature: 0,
-      max_tokens: 1800,
-    }),
-  })
-  if (!res.ok) {
-    const err = await res.text().catch(() => '')
-    throw new Error(`deepseek opinion http ${res.status}: ${err.slice(0, 200)}`)
+${input.content.slice(0, 18_000)}${extraRule}`
+
+  const call = async (maxTokens: number, extraRule: string) => {
+    const res = await fetch(DEEPSEEK_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${DEEPSEEK_KEY}`,
+      },
+      body: JSON.stringify({
+        model: 'deepseek-chat',
+        messages: [
+          { role: 'system', content: system },
+          { role: 'user', content: buildUser(extraRule) },
+        ],
+        response_format: { type: 'json_object' },
+        temperature: 0,
+        max_tokens: maxTokens,
+      }),
+    })
+    if (!res.ok) {
+      const err = await res.text().catch(() => '')
+      throw new Error(`deepseek opinion http ${res.status}: ${err.slice(0, 200)}`)
+    }
+    const json = (await res.json()) as {
+      choices?: Array<{ finish_reason?: string; message?: { content?: string } }>
+    }
+    const choice = json.choices?.[0]
+    return { content: choice?.message?.content ?? '', truncated: choice?.finish_reason === 'length' }
   }
-  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
-  const parsed = JSON.parse(json.choices?.[0]?.message?.content ?? '{}') as {
-    summary?: string
-    claims?: RawOpinionClaim[]
+
+  // 长文（尤其长文章/长想法）容易撞到 max_tokens 被截断，导致 JSON 不完整；
+  // 这里先用 4000 tokens，截断或解析失败时再用 8000 tokens + 限制条数重试一次。
+  let first = await call(4000, '')
+  let parsed = first.truncated ? null : parseJsonLoose(first.content)
+  if (!parsed) {
+    first = await call(8000, '\n\n注意：claims 最多 6 条，只保留与具体 A 股标的或行业直接相关的观点，务必输出完整合法的 JSON。')
+    parsed = parseJsonLoose(first.content)
   }
+  if (!parsed) throw new Error('deepseek opinion 返回内容不是合法 JSON（可能被截断）')
   return {
-    summary: parsed.summary?.trim() ?? '',
-    claims: Array.isArray(parsed.claims) ? parsed.claims : [],
+    summary: typeof parsed.summary === 'string' ? parsed.summary.trim() : '',
+    claims: Array.isArray(parsed.claims) ? (parsed.claims as RawOpinionClaim[]) : [],
     model: 'deepseek-chat',
   }
 }
