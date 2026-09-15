@@ -1,7 +1,127 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { normalizeXueqiuStatus, OPINION_ADAPTERS } from './opinion-adapters.ts'
+import { isZhihuRepin, normalizeXueqiuStatus, normalizeZhihuPinContent, OPINION_ADAPTERS } from './opinion-adapters.ts'
 import type { OpinionSubscription } from './opinions.ts'
+
+test('想法富文本节点归一化为可读正文', () => {
+  assert.equal(
+    normalizeZhihuPinContent([
+      { type: 'text', content: '今天减了一点存储芯片', own_text: '今天减了一点存储芯片' },
+      { type: 'image' },
+      { type: 'text', content: '继续观察 MLCC' },
+    ]),
+    '今天减了一点存储芯片\n[图片]\n继续观察 MLCC',
+  )
+  assert.equal(normalizeZhihuPinContent('<p>纯 HTML 想法</p>'), '纯 HTML 想法')
+  assert.equal(normalizeZhihuPinContent({ type: 'text', own_text: '对象形态' }), '对象形态')
+  assert.equal(normalizeZhihuPinContent(undefined), '')
+  assert.equal(normalizeZhihuPinContent([]), '')
+})
+
+test('转发想法通过 source_pin_id 判定', () => {
+  assert.equal(isZhihuRepin(0), false)
+  assert.equal(isZhihuRepin('0'), false)
+  assert.equal(isZhihuRepin(undefined), false)
+  assert.equal(isZhihuRepin('2083194951240774867'), true)
+})
+
+test('知乎同步同时拉取回答、文章与想法', async () => {
+  const originalFetch = globalThis.fetch
+  const originalCookie = process.env.ZHIHU_COOKIE
+  process.env.ZHIHU_COOKIE = 'z_c0=test'
+  const requested: string[] = []
+  globalThis.fetch = (async (input: string | URL | Request) => {
+    const url = String(input)
+    requested.push(url)
+    if (url.includes('/api/v4/members/') && !url.includes('/answers') && !url.includes('/articles') && !url.includes('/pins')) {
+      return Response.json({ id: 'member-1', name: '测试博主', url_token: 'test-token' })
+    }
+    if (url.includes('/answers')) {
+      return Response.json({
+        data: [{
+          id: 'answer-new',
+          created_time: 1_789_459_000,
+          content: '<p>今天的回答正文</p>',
+          question: { id: '1001', title: '如何看待今日行情？' },
+          author: { id: 'member-1', name: '测试博主', url_token: 'test-token' },
+        }],
+        paging: { is_end: true },
+      })
+    }
+    if (url.includes('/articles')) {
+      return Response.json({ data: [], paging: { is_end: true } })
+    }
+    if (url.includes('/pins')) {
+      return Response.json({
+        data: [
+          {
+            id: 'pin-new',
+            created: 1_789_460_000,
+            url: '/pins/pin-new',
+            source_pin_id: 0,
+            content: [{ type: 'text', content: '盘中想法：加仓铜', own_text: '盘中想法：加仓铜' }],
+            author: { id: 'member-1', name: '测试博主', url_token: 'test-token' },
+          },
+          {
+            id: 'pin-repin',
+            created: 1_789_461_000,
+            url: '/pins/pin-repin',
+            source_pin_id: '2083194951240774867',
+            content: [{ type: 'text', content: '同意这个判断', own_text: '同意这个判断' }],
+            author: { id: 'member-1', name: '测试博主', url_token: 'test-token' },
+          },
+          {
+            id: 'pin-old',
+            created: 1_789_400_000,
+            url: '/pins/pin-old',
+            source_pin_id: 0,
+            content: [{ type: 'text', content: '旧想法不应重复入库' }],
+            author: { id: 'member-1', name: '测试博主', url_token: 'test-token' },
+          },
+        ],
+        paging: { is_end: true },
+      })
+    }
+    throw new Error('unexpected request: ' + url)
+  }) as typeof fetch
+
+  try {
+    const subscription: OpinionSubscription = {
+      id: 'subscription-zhihu',
+      platform: 'zhihu',
+      platformUserId: 'test-token',
+      nickname: '测试博主',
+      profileUrl: 'https://www.zhihu.com/people/test-token',
+      enabled: true,
+      intervalMinutes: 15,
+      lastCheckedAt: 0,
+      lastPostId: 'pin:pin-old',
+      authStatus: 'ready',
+      createdAt: 1,
+      updatedAt: 1,
+    }
+    const result = await OPINION_ADAPTERS.zhihu.fetchLatest(subscription)
+    assert.equal(requested.some((url) => url.includes('/pins')), true, '应请求想法接口')
+
+    const ids = result.documents.map((doc) => doc.platformPostId).sort()
+    assert.deepEqual(ids, ['answer:answer-new', 'pin:pin-new', 'pin:pin-repin'])
+
+    const pin = result.documents.find((doc) => doc.platformPostId === 'pin:pin-new')
+    assert.ok(pin)
+    assert.equal(pin.content, '盘中想法：加仓铜')
+    assert.equal(pin.url, 'https://www.zhihu.com/pins/pin-new')
+    assert.equal(pin.contentKind, 'original')
+    assert.equal(pin.authorName, '测试博主')
+
+    const repin = result.documents.find((doc) => doc.platformPostId === 'pin:pin-repin')
+    assert.ok(repin)
+    assert.equal(repin.contentKind, 'commentary_repost')
+  } finally {
+    globalThis.fetch = originalFetch
+    if (originalCookie === undefined) delete process.env.ZHIHU_COOKIE
+    else process.env.ZHIHU_COOKIE = originalCookie
+  }
+})
 
 test('雪球增量同步在上次文章处停止并补取详情', async () => {
   const originalFetch = globalThis.fetch

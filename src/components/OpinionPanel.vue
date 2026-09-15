@@ -139,7 +139,7 @@ async function toggleSubscription(subscription: OpinionSubscription) {
 }
 
 async function removeSubscription(subscription: OpinionSubscription) {
-  if (!window.confirm(`删除订阅“${subscription.nickname || subscription.platformUserId}”？已采集文章会保留。`)) return
+  if (!window.confirm(`删除订阅“${subscription.nickname || subscription.platformUserId}”？已采集内容会保留。`)) return
   try {
     await deleteOpinionSubscription(subscription.id)
     await load()
@@ -437,7 +437,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
           <b>{{ platform === 'zhihu' ? '知乎' : '雪球' }}观点时间线</b>
           <span>{{ documents.length }} 篇</span>
         </div>
-        <div v-if="!loading && documents.length === 0" class="op-card op-empty">暂无文章，可先手动导入或同步博主。</div>
+        <div v-if="!loading && documents.length === 0" class="op-card op-empty">暂无内容（回答 / 文章 / 想法），可先手动导入或同步博主。</div>
         <article v-for="document in documents" :key="document.id" class="op-card op-document">
           <div class="op-doc-meta">
             <b>{{ document.authorName }}</b>

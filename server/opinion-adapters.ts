@@ -35,6 +35,46 @@ const numberTime = (value: unknown): number => {
 
 export const OPINION_COLLECTION_POLICY_VERSION = 2
 
+/**
+ * 知乎想法（pin）正文是富文本节点数组，形如
+ *   [{ type: 'text', content: '...', own_text: '...' }, { type: 'image' }, ...]
+ * 早期只拉回答/文章时用不到；直接把数组丢给 stripHtml 会得到 "[object Object]"，
+ * 因此单独做一次归一化。
+ */
+export function normalizeZhihuPinContent(raw: unknown): string {
+  const nodeText = (node: Record<string, unknown>): string => {
+    const type = String(node.type ?? '')
+    if (type === 'text') return String(node.own_text ?? node.content ?? '')
+    if (type === 'image') return '[图片]'
+    if (type === 'video') return '[视频]'
+    if (type === 'link') return '[链接]' + (node.title ? '：' + String(node.title) : '')
+    const fallback = node.own_text ?? node.content ?? node.title ?? ''
+    return typeof fallback === 'string' ? fallback : ''
+  }
+  if (typeof raw === 'string') return stripHtml(raw)
+  if (Array.isArray(raw)) {
+    return raw
+      .map((node) => (node && typeof node === 'object' ? nodeText(node as Record<string, unknown>) : String(node ?? '')))
+      .map((text) => text.trim())
+      .filter(Boolean)
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+  }
+  if (raw && typeof raw === 'object') {
+    const obj = raw as Record<string, unknown>
+    const text = obj.own_text ?? obj.content ?? obj.text ?? ''
+    return typeof text === 'string' ? stripHtml(text) : ''
+  }
+  return ''
+}
+
+/** 想法转发判定：source_pin_id 非 0 表示这是转发的他人想法 */
+export function isZhihuRepin(sourcePinId: unknown): boolean {
+  const value = Number(sourcePinId)
+  return Number.isFinite(value) && value > 0
+}
+
 const isExplicitRepost = (title: string): boolean =>
   /(^|[【\[\s])转载(?:自|[:：\]】\s])|转自[:：]/i.test(title)
 
@@ -87,14 +127,16 @@ class ZhihuAdapter implements OpinionSourceAdapter {
 
   private async fetchPaged(
     token: string,
-    kind: 'answers' | 'articles',
+    kind: 'answers' | 'articles' | 'pins',
   ): Promise<Array<Record<string, unknown>>> {
     const items: Array<Record<string, unknown>> = []
     for (let page = 0; page < 2; page++) {
       const offset = page * 20
       const include = kind === 'answers'
         ? 'data[*].is_normal,content,excerpt,created_time,updated_time,question,author'
-        : 'data[*].content,excerpt,created,updated,title,author'
+        : kind === 'articles'
+          ? 'data[*].content,excerpt,created,updated,title,author'
+          : 'data[*].content,created,updated,author,url,source_pin_id,repin_count'
       const url = `https://www.zhihu.com/api/v4/members/${encodeURIComponent(token)}/${kind}` +
         `?include=${encodeURIComponent(include)}&offset=${offset}&limit=20&sort_by=created`
       const json = await this.fetchJson(url, `https://www.zhihu.com/people/${token}`)
@@ -112,28 +154,31 @@ class ZhihuAdapter implements OpinionSourceAdapter {
   private extractInitialEntities(html: string): {
     answers: Array<Record<string, unknown>>
     articles: Array<Record<string, unknown>>
+    pins: Array<Record<string, unknown>>
   } {
     const match = html.match(/<script id="js-initialData"[^>]*>([\s\S]*?)<\/script>/)
       ?? html.match(/<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/)
-    if (!match?.[1]) return { answers: [], articles: [] }
+    if (!match?.[1]) return { answers: [], articles: [], pins: [] }
     try {
       const json = JSON.parse(match[1]) as Record<string, unknown>
       const state = (json.initialState ?? json.props ?? json) as Record<string, unknown>
       const entities = (state.entities ?? (state.pageProps as Record<string, unknown> | undefined)?.entities ?? {}) as Record<string, unknown>
       const answers = Object.values((entities.answers ?? {}) as Record<string, Record<string, unknown>>)
       const articles = Object.values((entities.articles ?? {}) as Record<string, Record<string, unknown>>)
-      return { answers, articles }
+      const pins = Object.values((entities.pins ?? {}) as Record<string, Record<string, unknown>>)
+      return { answers, articles, pins }
     } catch {
-      return { answers: [], articles: [] }
+      return { answers: [], articles: [], pins: [] }
     }
   }
 
-  private async fetchFromProfilePages(token: string): Promise<Array<Record<string, unknown> & { __kind: 'answer' | 'article' }>> {
+  private async fetchFromProfilePages(token: string): Promise<Array<Record<string, unknown> & { __kind: 'answer' | 'article' | 'pin' }>> {
     const pages = [
       { path: 'answers', kind: 'answer' as const },
       { path: 'posts', kind: 'article' as const },
+      { path: 'pins', kind: 'pin' as const },
     ]
-    const items: Array<Record<string, unknown> & { __kind: 'answer' | 'article' }> = []
+    const items: Array<Record<string, unknown> & { __kind: 'answer' | 'article' | 'pin' }> = []
     for (const page of pages) {
       const res = await fetch(`https://www.zhihu.com/people/${encodeURIComponent(token)}/${page.path}`, {
         headers: this.headers(`https://www.zhihu.com/people/${token}`, false),
@@ -141,7 +186,7 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       if (!res.ok) continue
       const html = await res.text()
       const entities = this.extractInitialEntities(html)
-      const raw = page.kind === 'answer' ? entities.answers : entities.articles
+      const raw = page.kind === 'answer' ? entities.answers : page.kind === 'article' ? entities.articles : entities.pins
       for (const item of raw) items.push({ ...item, __kind: page.kind })
       await new Promise((resolve) => setTimeout(resolve, 200))
     }
@@ -154,15 +199,18 @@ class ZhihuAdapter implements OpinionSourceAdapter {
     nickname: string,
     memberId: string,
     item: Record<string, unknown>,
-    kind: 'answer' | 'article',
+    kind: 'answer' | 'article' | 'pin',
   ): OpinionDocumentInput | null {
     const rawId = String(item.id ?? item.ContentID ?? item.content_id ?? '')
     if (!rawId) return null
     const question = item.question && typeof item.question === 'object'
       ? item.question as Record<string, unknown>
       : {}
+    const pinText = kind === 'pin' ? normalizeZhihuPinContent(item.content ?? item.excerpt) : ''
+    const pinTitle = pinText.length > 40 ? pinText.slice(0, 40) + '…' : pinText
     const title = String(
-      item.title ?? item.Title ?? question.title ?? `${nickname}的${kind === 'answer' ? '回答' : '文章'}`,
+      item.title ?? item.Title ?? question.title ??
+      (kind === 'pin' ? (pinTitle || `${nickname}的想法`) : `${nickname}的${kind === 'answer' ? '回答' : '文章'}`),
     )
     if (isExplicitRepost(title)) return null
     const author = item.author && typeof item.author === 'object'
@@ -172,11 +220,29 @@ class ZhihuAdapter implements OpinionSourceAdapter {
     const authorName = String(author.name ?? item.AuthorName ?? nickname).trim()
     if (authorToken && authorToken !== token) return null
     if (!authorToken && authorName && authorName !== nickname) return null
+    const absolutePinUrl = (value: unknown): string => {
+      const text = String(value ?? '').trim()
+      if (!text) return `https://www.zhihu.com/pins/${rawId}`
+      if (text.startsWith('http')) return text
+      return 'https://www.zhihu.com' + (text.startsWith('/') ? text : '/' + text)
+    }
     const url = kind === 'answer'
       ? String(item.url ?? (question.id ? `https://www.zhihu.com/question/${question.id}/answer/${rawId}` : ''))
-      : String(item.url ?? `https://zhuanlan.zhihu.com/p/${rawId}`)
-    const content = stripHtml(item.content ?? item.excerpt ?? item.ContentText ?? item.content_text ?? item.description)
+      : kind === 'pin'
+        ? absolutePinUrl(item.url)
+        : String(item.url ?? `https://zhuanlan.zhihu.com/p/${rawId}`)
+    const content = kind === 'pin'
+      ? pinText
+      : stripHtml(item.content ?? item.excerpt ?? item.ContentText ?? item.content_text ?? item.description)
     if (!content) return null
+    // 纯图片/纯视频/纯链接的想法没有可分析文本，不入库，避免污染观点库
+    if (kind === 'pin') {
+      const meaningful = content
+        .replace(/\[(图片|视频|链接)[^\]]*\]/g, '')
+        .replace(/[\s\p{P}\p{S}]/gu, '')
+      if (meaningful.length < 4) return null
+    }
+    const repin = kind === 'pin' && isZhihuRepin(item.source_pin_id)
     return {
       subscriptionId: subscription.id,
       platform: this.platform,
@@ -188,7 +254,7 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       title,
       content,
       publishedAt: numberTime(item.created_time ?? item.created ?? item.updated_time ?? item.updated ?? item.EditTime),
-      contentKind: 'original',
+      contentKind: repin ? 'commentary_repost' : 'original',
       collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
     }
   }
@@ -210,7 +276,7 @@ class ZhihuAdapter implements OpinionSourceAdapter {
       const title = String(item.Title ?? item.title ?? `${nickname}的内容`)
       if (
         authorName !== nickname ||
-        !['answer', 'article'].includes(contentType) ||
+        !['answer', 'article', 'pin'].includes(contentType) ||
         !rawId ||
         isExplicitRepost(title)
       ) return []
@@ -221,9 +287,13 @@ class ZhihuAdapter implements OpinionSourceAdapter {
         authorId: memberId,
         authorName: nickname,
         profileUrl: `https://www.zhihu.com/people/${token}`,
-        url: String(item.Url ?? item.url ?? ''),
+        url: contentType === 'pin'
+          ? String(item.Url ?? item.url ?? `https://www.zhihu.com/pins/${rawId}`)
+          : String(item.Url ?? item.url ?? ''),
         title,
-        content: stripHtml(item.ContentText ?? item.content_text ?? item.description),
+        content: contentType === 'pin'
+          ? normalizeZhihuPinContent(item.Content ?? item.ContentText ?? item.content ?? item.content_text ?? item.description)
+          : stripHtml(item.ContentText ?? item.content_text ?? item.description),
         publishedAt: numberTime(item.EditTime ?? item.edit_time ?? item.updated_at),
         contentKind: 'original',
         collectionPolicyVersion: OPINION_COLLECTION_POLICY_VERSION,
@@ -277,21 +347,27 @@ class ZhihuAdapter implements OpinionSourceAdapter {
     const errors: string[] = []
 
     if (cookie) {
-      try {
-        const [answers, articles] = await Promise.all([
-          this.fetchPaged(token, 'answers'),
-          this.fetchPaged(token, 'articles'),
-        ])
-        for (const item of answers) {
-          const doc = this.toDocument(subscription, token, nickname, memberId, item, 'answer')
+      // 回答 / 文章 / 想法 三类并行拉取：想法（pin）是博主盘中观点最密集的来源，
+      // 早期版本只请求了 answers + articles，因此完全拿不到想法。
+      const [answers, articles, pins] = await Promise.all([
+        this.fetchPaged(token, 'answers').catch((error) => {
+          errors.push('回答：' + (error instanceof Error ? error.message : String(error)))
+          return [] as Array<Record<string, unknown>>
+        }),
+        this.fetchPaged(token, 'articles').catch((error) => {
+          errors.push('文章：' + (error instanceof Error ? error.message : String(error)))
+          return [] as Array<Record<string, unknown>>
+        }),
+        this.fetchPaged(token, 'pins').catch((error) => {
+          errors.push('想法：' + (error instanceof Error ? error.message : String(error)))
+          return [] as Array<Record<string, unknown>>
+        }),
+      ])
+      for (const [kind, items] of [['answer', answers], ['article', articles], ['pin', pins]] as const) {
+        for (const item of items) {
+          const doc = this.toDocument(subscription, token, nickname, memberId, item, kind)
           if (doc) documents.push(doc)
         }
-        for (const item of articles) {
-          const doc = this.toDocument(subscription, token, nickname, memberId, item, 'article')
-          if (doc) documents.push(doc)
-        }
-      } catch (error) {
-        errors.push(error instanceof Error ? error.message : String(error))
       }
     }
 
