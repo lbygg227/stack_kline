@@ -26,6 +26,8 @@ import type {
   DragonTigerCacheEntry,
   DragonTigerRankStatus,
   DragonTigerRecoResponse,
+  LimitUpBoard,
+  LimitUpSentiment,
   OpinionBackfillState,
   OpinionBacktestConfig,
   OpinionBacktestResult,
@@ -817,6 +819,22 @@ export async function fetchDailyDigest(): Promise<{ digest: DailyDigest | null; 
 export interface DigestPushConfigResponse {
   config: DigestPushConfig
   effective: { channel: DigestChannel; source: 'config' | 'env' | 'none'; target: string }
+}
+
+export async function fetchLimitUpBoard(force = false, intraday = true): Promise<{
+  board: LimitUpBoard
+  cachedAt: number
+  history: Array<{ date: string; sentiment: LimitUpSentiment }>
+}> {
+  const params = new URLSearchParams()
+  if (force) params.set('force', '1')
+  if (!intraday) params.set('intraday', '0')
+  const res = await fetch(`/api/limit-up?${params.toString()}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `limit-up http ${res.status}`)
+  }
+  return (await res.json()) as { board: LimitUpBoard; cachedAt: number; history: Array<{ date: string; sentiment: LimitUpSentiment }> }
 }
 
 export async function fetchOpinionBackfill(): Promise<OpinionBackfillState> {

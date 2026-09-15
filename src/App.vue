@@ -15,6 +15,7 @@ import TodayRecommendations from './components/TodayRecommendations.vue'
 import BacktestResearch from './components/BacktestResearch.vue'
 import SimulationPanel from './components/SimulationPanel.vue'
 import DailyDigest from './components/DailyDigest.vue'
+import LimitUpPanel from './components/LimitUpPanel.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -30,6 +31,7 @@ const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'strategy', label: '选股', icon: '🔍' },
   { key: 'backtest', label: '回测', icon: '🧪' },
   { key: 'simulation', label: '模拟盘', icon: '💼' },
+  { key: 'limit-up', label: '涨停', icon: '🔥' },
   { key: 'digest', label: '复盘', icon: '🗒️' },
   { key: 'opinion', label: '观点', icon: '📝' },
   { key: 'trade', label: '交易', icon: '💰' },
@@ -80,6 +82,7 @@ onBeforeUnmount(() => {
         <BacktestResearch v-else-if="mobileTab === 'backtest'" />
         <SimulationPanel v-else-if="mobileTab === 'simulation'" />
         <DailyDigest v-else-if="mobileTab === 'digest'" />
+        <LimitUpPanel v-else-if="mobileTab === 'limit-up'" />
         <OpinionPanel v-else-if="mobileTab === 'opinion'" />
         <TradePanel v-else-if="mobileTab === 'trade'" />
         <DataManagePanel v-else-if="mobileTab === 'data'" />
@@ -93,6 +96,7 @@ onBeforeUnmount(() => {
       <BacktestResearch v-else-if="state.view === 'backtest'" class="page-view" />
       <SimulationPanel v-else-if="state.view === 'simulation'" class="page-view" />
       <DailyDigest v-else-if="state.view === 'digest'" class="page-view" />
+      <LimitUpPanel v-else-if="state.view === 'limit-up'" class="page-view" />
       <NewsEventPanel v-else-if="state.view === 'events'" class="page-view" />
       <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
       <AllMarketPanel v-else-if="state.view === 'all-market'" class="page-view" />

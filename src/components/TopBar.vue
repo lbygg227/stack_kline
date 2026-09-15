@@ -158,6 +158,14 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
       每日复盘
     </button>
 
+    <button
+      class="btn nav-btn"
+      :class="{ active: state.view === 'limit-up' }"
+      @click="setView(state.view === 'limit-up' ? 'market' : 'limit-up')"
+    >
+      涨停板
+    </button>
+
     <div v-if="!isMobile && candidates.length" class="queue-chip">
       <button class="btn" @click="prevCandidate">‹</button>
       <button class="queue-mid" @click="openWorkbench">

@@ -1426,6 +1426,66 @@ export interface DigestSection {
   lines: string[]
 }
 
+export type SentimentPhase = '冰点' | '启动' | '发酵' | '高潮' | '退潮'
+
+export interface LimitUpItem {
+  code: string
+  name: string
+  industry?: string
+  concepts: string[]
+  price: number
+  changePct: number
+  amount: number
+  turnover: number
+  volumeRatio: number
+  mainNetInflow: number
+  limitRatio: number
+  board: number
+  firstSealAt?: string
+  breakCount?: number
+  recognition: number
+  topSector?: string
+  topSectorCount?: number
+  isSectorLeader: boolean
+}
+
+export interface LimitUpSector {
+  key: string
+  type: 'industry' | 'concept'
+  name: string
+  limitUpCount: number
+  maxBoard: number
+  avgChangePct: number
+  totalAmount: number
+  leaderCode: string
+  leaderName: string
+  members: string[]
+}
+
+export interface LimitUpSentiment {
+  limitUpCount: number
+  limitDownCount: number
+  brokenCount: number
+  brokenRate: number
+  maxBoard: number
+  promotionRate: number
+  yesterdayPremium: number
+  phase: SentimentPhase
+  score: number
+  reasons: string[]
+}
+
+export interface LimitUpBoard {
+  date: string
+  generatedAt: number
+  limitUp: LimitUpItem[]
+  limitDown: LimitUpItem[]
+  broken: LimitUpItem[]
+  ladder: Record<string, number>
+  sectors: LimitUpSector[]
+  sentiment: LimitUpSentiment
+}
+
 export interface OpinionBackfillProgress {
   subscriptionId: string
   nickname: string
