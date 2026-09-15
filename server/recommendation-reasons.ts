@@ -11,9 +11,10 @@ import type { SnapshotStock } from './eastmoney.ts'
 import type { FundamentalSignal } from './fundamentals.ts'
 import type { IndustryStats } from './screening-strategies.ts'
 
-export type ReasonDimension = 'fundamental' | 'technical' | 'fund' | 'dragon' | 'event' | 'opinion' | 'industry'
+export type ReasonDimension = 'board' | 'fundamental' | 'technical' | 'fund' | 'dragon' | 'event' | 'opinion' | 'industry'
 
 export const REASON_DIMENSION_LABEL: Record<ReasonDimension, string> = {
+  board: '涨停板',
   fundamental: '基本面',
   technical: '技术面',
   fund: '资金面',
@@ -23,7 +24,7 @@ export const REASON_DIMENSION_LABEL: Record<ReasonDimension, string> = {
   industry: '行业板块',
 }
 
-export const REASON_DIMENSIONS: ReasonDimension[] = ['fundamental', 'technical', 'fund', 'dragon', 'event', 'opinion', 'industry']
+export const REASON_DIMENSIONS: ReasonDimension[] = ['board', 'fundamental', 'technical', 'fund', 'dragon', 'event', 'opinion', 'industry']
 
 export interface ReasonSourceLink {
   authorName: string
@@ -226,6 +227,91 @@ export function opinionReasons(item: {
       strength: 35,
       metrics: { riskCount: item.risks.length },
       expect: '风险兑现 → 若提示的风险事件发生，推荐应判定为失效',
+    })
+  }
+  return reasons
+}
+
+/** 涨停板理由：连板高度、板块效应、封板质量、情绪相位 */
+export function boardReasons(item: {
+  board: number
+  /** relay = 板块补涨（未涨停的跟随标的） */
+  kind?: 'board' | 'relay'
+  isSectorLeader: boolean
+  topSector?: string
+  topSectorCount?: number
+  firstSealAt?: string
+  breakCount?: number
+  recognition: number
+  sectorNames?: string[]
+  sentimentPhase?: string
+  sentimentScore?: number
+}): RecommendationReason[] {
+  const reasons: RecommendationReason[] = []
+  const isRelay = item.kind === 'relay'
+  reasons.push({
+    dimension: 'board',
+    key: 'board_height',
+    label: isRelay
+      ? '板块补涨'
+      : (item.board >= 2 ? item.board + ' 连板' : '首板') + (item.isSectorLeader ? '·板块龙头' : ''),
+    detail: isRelay
+      ? '所属板块已有 ' + (item.topSectorCount ?? 0) + ' 家涨停，本股尚未启动，属于板块内补涨位置'
+      :
+      (item.board >= 2 ? '已连续 ' + item.board + ' 个交易日涨停' : '今日首次涨停') +
+      (item.firstSealAt ? '，' + item.firstSealAt + ' 封板' : '') +
+      (item.breakCount ? '，盘中炸板 ' + item.breakCount + ' 次' : '，未炸板') +
+      '，辨识度 ' + item.recognition,
+    weight: 0.34,
+    strength: isRelay
+      ? Math.max(35, Math.min(80, 40 + (item.topSectorCount ?? 0) * 5))
+      : Math.max(30, Math.min(95, 40 + item.board * 12 - (item.breakCount ?? 0) * 2 + (item.breakCount ? 0 : 6))),
+    metrics: {
+      board: item.board,
+      recognition: item.recognition,
+      breakCount: item.breakCount ?? 0,
+      firstSealAt: item.firstSealAt ?? '未知',
+    },
+    expect: isRelay
+      ? '补涨逻辑成立 → 3 日内板块延续且本股跑赢板块中位数，否则证伪'
+      : '连板逻辑成立 → 次日高开或继续封板；若炸板或收盘跌破前一日涨停价则证伪',
+  })
+  if (item.topSector && (item.topSectorCount ?? 0) >= 2) {
+    reasons.push({
+      dimension: 'board',
+      key: 'sector_effect',
+      label: '板块效应（' + item.topSector + '）',
+      detail:
+        item.topSector + ' 今日 ' + item.topSectorCount + ' 家涨停' +
+        (item.isSectorLeader ? '，本股为板块内辨识度第一' : '，本股为跟随标的'),
+      weight: 0.28,
+      strength: Math.max(30, Math.min(90, 35 + (item.topSectorCount ?? 0) * 6 + (item.isSectorLeader ? 12 : 0))),
+      metrics: { sector: item.topSector, sectorLimitUpCount: item.topSectorCount ?? 0, isLeader: item.isSectorLeader ? 'yes' : 'no' },
+      expect: '板块效应成立 → 板块 3 日内仍有涨停家数，本股不弱于板块中位',
+    })
+  }
+  if (item.sentimentPhase) {
+    reasons.push({
+      dimension: 'board',
+      key: 'sentiment',
+      label: '情绪相位：' + item.sentimentPhase,
+      detail: '当日市场情绪评分 ' + (item.sentimentScore ?? 0) + '，相位「' + item.sentimentPhase + '」',
+      weight: 0.14,
+      strength: item.sentimentPhase === '退潮' || item.sentimentPhase === '冰点' ? 32 : item.sentimentPhase === '高潮' ? 58 : 68,
+      metrics: { phase: item.sentimentPhase, score: item.sentimentScore ?? 0 },
+      expect: '情绪相位判断正确 → 相位与次日打板溢价方向一致（发酵/高潮为正，退潮为负）',
+    })
+  }
+  if (item.sectorNames?.length) {
+    reasons.push({
+      dimension: 'board',
+      key: 'sector_tags',
+      label: '题材归属',
+      detail: '关联题材：' + item.sectorNames.slice(0, 4).join('、'),
+      weight: 0.1,
+      strength: 55,
+      metrics: { sectorCount: item.sectorNames.length },
+      expect: '题材持续 → 持有期内题材指数未明显走弱',
     })
   }
   return reasons

@@ -103,6 +103,7 @@ import {
 } from './recommendation-weights.ts'
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
 import { getReasonGuard } from './recommendation-guard.ts'
+import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import {
   buildDailyDigest,
   DailyDigestScheduler,
@@ -192,6 +193,36 @@ function attachRemoteTunnel(server: ViteDevServer): void {
   server.httpServer?.once('close', () => tunnel.stop())
 }
 
+/** 涨停板当日缓存：构建一次需要日K回溯 + 分时（约 20s），不随请求重复计算 */
+let limitUpCache: { at: number; board: LimitUpBoard } | null = null
+
+async function refreshLimitUpBoard(withIntraday: boolean): Promise<LimitUpBoard> {
+  const stocks = service.stocksWithIndustry()
+  if (!stocks.length) throw new Error('快照尚未就绪')
+  const board = await buildLimitUpBoardFull(stocks, {
+    loadBars: (code) => getKlineWithCache(code, 'day', 200),
+    loadIntraday: withIntraday
+      ? (code) => getKlineWithCache(code, 'm1', 240)
+      : undefined,
+    intradayLimit: 40,
+  })
+  limitUpCache = { at: Date.now(), board }
+  console.log(
+    '[limit-up] ' + board.date + ' 涨停 ' + board.limitUp.length + ' / 跌停 ' + board.limitDown.length +
+    ' / 炸板 ' + board.broken.length + ' 情绪 ' + board.sentiment.phase + '(' + board.sentiment.score + ')',
+  )
+  return board
+}
+
+/** 取当日涨停板：优先内存缓存，其次落盘快照（服务重启后仍可用），都没有则返回 null（不阻塞请求） */
+function currentLimitUpBoard(): LimitUpBoard | null {
+  if (limitUpCache && Date.now() - limitUpCache.at < 10 * 60_000) return limitUpCache.board
+  const snapshot = loadBoardSnapshot()
+  if (!snapshot) return null
+  limitUpCache = { at: Date.now() - 9 * 60_000, board: snapshot }
+  return snapshot
+}
+
 export function marketDataPlugin(): Plugin {
   const opinionScheduler = new OpinionSyncScheduler()
   const eventCollectScheduler = new MarketEventCollectScheduler(20)
@@ -218,6 +249,7 @@ export function marketDataPlugin(): Plugin {
         push: isAutoPushEnabled(),
       }))
       server.httpServer?.once('close', () => {
+        limitUpCache = null
         opinionScheduler.stop()
         eventCollectScheduler.stop()
         fundFlowScheduler.stop()
@@ -460,6 +492,21 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+        // ---- 涨停板与情绪周期 ----
+        if (path === '/api/limit-up') {
+          const force = url.searchParams.get('force') === '1'
+          const withIntraday = url.searchParams.get('intraday') !== '0'
+          try {
+            const board = force || !limitUpCache || Date.now() - limitUpCache.at > 10 * 60_000
+              ? await refreshLimitUpBoard(withIntraday)
+              : limitUpCache.board
+            sendJson(res, 200, { board, cachedAt: limitUpCache?.at ?? 0, history: loadBoardHistory().days.slice(0, 20).map((day) => ({ date: day.date, sentiment: day.sentiment })) })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
         // ---- 今日推荐（统一候选模型） ----
         if (path === '/api/recommendations') {
           const snap = service.getSnapshotState() ?? (await service.ensureSnapshot(false))
@@ -468,7 +515,8 @@ export function marketDataPlugin(): Plugin {
             return
           }
           try {
-            const result = buildTodayRecommendations(service.stocksWithIndustry())
+            const board = currentLimitUpBoard()
+            const result = buildTodayRecommendations(service.stocksWithIndustry(), board ? { board } : {})
             sendJson(res, 200, result)
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })

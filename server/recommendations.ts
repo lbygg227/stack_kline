@@ -9,6 +9,7 @@ import { buildOpinionStockReco } from './opinion-stock-reco.ts'
 import { buildFundStockReco } from './fund-stock-reco.ts'
 import { buildDragonTigerReco } from './dragon-tiger-stock-reco.ts'
 import { buildIndustryStats } from './screening-strategies.ts'
+import { PHASE_STYLE_MULTIPLIER, type LimitUpBoard, type SectorBoard } from './limit-up.ts'
 import { readJson, writeJson } from './store.ts'
 import {
   getConfidenceScale,
@@ -22,6 +23,7 @@ import { reconcileObserving, trackBlocked, type RecycledItem } from './observe-r
 
 export type { RecycledItem }
 import {
+  boardReasons,
   dedupeReasons,
   dragonReasons,
   eventReasons,
@@ -34,8 +36,16 @@ import {
   type RecommendationReason,
 } from './recommendation-reasons.ts'
 
-export type RecommendationStyle = 'trend' | 'limit_up' | 'pullback' | 'leader' | 'event' | 'fund' | 'opinion'
-export type RecommendationChannel = 'technical' | 'event' | 'opinion' | 'fund' | 'dragon'
+export type RecommendationStyle =
+  | 'trend'
+  | 'limit_up'
+  | 'pullback'
+  | 'leader'
+  | 'relay'
+  | 'event'
+  | 'fund'
+  | 'opinion'
+export type RecommendationChannel = 'technical' | 'event' | 'opinion' | 'fund' | 'dragon' | 'board'
 
 export interface RecommendationLevels {
   entry?: number
@@ -49,6 +59,7 @@ export interface RecommendationEvidence {
   opinion?: string[]
   fund?: string[]
   dragon?: string[]
+  board?: string[]
 }
 
 export interface RecommendationSource {
@@ -107,6 +118,17 @@ export interface RecommendationRecord {
   benchmark?: string
   /** 准入守卫结论：observe 表示有反向证据或冷理由占比过高，只进观察队列 */
   guard?: GuardDecision
+  /** 涨停板上下文（连板高度/板块/封板质量/情绪相位） */
+  board?: {
+    height: number
+    recognition: number
+    isSectorLeader: boolean
+    topSector?: string
+    topSectorCount?: number
+    firstSealAt?: string
+    breakCount?: number
+    phase?: string
+  }
 }
 
 export interface MarketTemperature {
@@ -128,6 +150,8 @@ export interface RecommendationListResponse {
   market?: MarketTemperature
   /** 被守卫拦下、只做观察的标的（含拦截原因） */
   observing: RecommendationRecord[]
+  /** 涨停板情绪相位（有数据时） */
+  sentiment?: { phase: string; score: number; limitUpCount: number; limitDownCount: number; brokenRate: number; maxBoard: number; yesterdayPremium: number; promotionRate: number }
   /** 从观察名单回到推荐的标的（条件已改善） */
   recycled: RecycledItem[]
   /** 连续多日被拦、理由可能长期不成立的标的 */
@@ -164,7 +188,7 @@ export function computeMarketTemperature(stocks: SnapshotStock[]): MarketTempera
   }
 }
 
-const STYLE_KEYS: RecommendationStyle[] = ['trend', 'limit_up', 'pullback', 'leader', 'event', 'fund', 'opinion']
+const STYLE_KEYS: RecommendationStyle[] = ['trend', 'limit_up', 'pullback', 'leader', 'relay', 'event', 'fund', 'opinion']
 const HISTORY_FILE = 'recommendation-history.json'
 const RECORD_FILE = 'recommendation-records.json'
 
@@ -212,6 +236,7 @@ const STYLE_LABEL: Record<RecommendationStyle, string> = {
   limit_up: '打板',
   pullback: '低吸',
   leader: '龙头',
+  relay: '补涨',
   event: '事件',
   fund: '资金',
   opinion: '观点',
@@ -241,6 +266,8 @@ function invalidFor(style: RecommendationStyle): string[] {
       return ['跌破5日均线', '放量滞涨或出现长上影']
     case 'pullback':
       return ['继续放量下跌', '跌破近期低点']
+    case 'relay':
+      return ['板块龙头炸板或跌停', '板块涨停家数快速萎缩']
     case 'leader':
       return ['失去行业领涨地位', '板块内出现更强卡位']
     case 'event':
@@ -253,22 +280,40 @@ function invalidFor(style: RecommendationStyle): string[] {
 }
 
 function horizonFor(style: RecommendationStyle): number {
-  return style === 'limit_up' ? 3 : style === 'pullback' ? 3 : style === 'event' ? 7 : style === 'opinion' ? 7 : 5
+  return style === 'limit_up' ? 3 : style === 'pullback' ? 3 : style === 'relay' ? 5 : style === 'event' ? 7 : style === 'opinion' ? 7 : 5
 }
 
 function computeVerification(item: RecommendationRecord, stock?: SnapshotStock): RecommendationVerification {
   const confirmations: string[] = []
   const conflicts: string[] = []
+  // 打板/龙头/补涨看的不是「涨幅是否过大」，而是封板质量与板块梯队，判定口径需要区分
+  const boardStyle = item.style === 'limit_up' || item.style === 'leader' || item.style === 'relay'
   if (item.channels.includes('technical')) confirmations.push('技术形态入选')
   if (item.channels.includes('fund')) confirmations.push('资金面同向')
   if (item.channels.includes('event')) confirmations.push('事件催化')
   if (item.channels.includes('dragon')) confirmations.push('龙虎榜确认')
   if (item.channels.includes('opinion')) confirmations.push('博主观点')
+  if (item.channels.includes('board')) confirmations.push('涨停板通道入选')
+  if (item.board) {
+    const board = item.board
+    if ((board.topSectorCount ?? 0) >= 3) {
+      confirmations.push('板块梯队成立（' + (board.topSector ?? '') + ' ' + board.topSectorCount + ' 家涨停）')
+    }
+    if (board.firstSealAt && board.firstSealAt <= '10:00') confirmations.push('早盘封板（' + board.firstSealAt + '）')
+    if (board.firstSealAt && board.firstSealAt >= '14:00') conflicts.push('尾盘才封板（' + board.firstSealAt + '），封板质量弱')
+    if ((board.breakCount ?? 0) >= 3) conflicts.push('盘中反复炸板 ' + board.breakCount + ' 次')
+    if (board.isSectorLeader && board.height >= 2) confirmations.push('板块龙头（' + board.height + ' 连板）')
+    if (board.height >= 1 && board.height <= 3) confirmations.push('板位不高（' + board.height + ' 板），接力空间尚可')
+    if (board.height >= 5) conflicts.push('已 ' + board.height + ' 连板，高位分歧风险')
+    if (board.phase === '退潮') conflicts.push('情绪处于退潮期')
+    if (board.phase === '高潮') conflicts.push('情绪高潮期，警惕次日分歧')
+  }
   if (stock) {
     if (stock.changePct > 0 && stock.volumeRatio >= 1.2) confirmations.push('量价配合')
     if (stock.changePct < -3) conflicts.push('当日跌幅较大')
     if (stock.volumeRatio > 0 && stock.volumeRatio < 0.8) conflicts.push('量能不足')
-    if (stock.changePct >= 9.8) conflicts.push('短期涨幅过大')
+    // 打板类标的本来就在涨停板上，不能用「涨幅过大」扣分
+    if (stock.changePct >= 9.8 && !boardStyle) conflicts.push('短期涨幅过大')
     if (item.style === 'opinion' && stock.changePct < 0) conflicts.push('观点看多但价格走弱')
   }
   const score = Math.max(0, Math.min(100, 50 + confirmations.length * 12 - conflicts.length * 18))
@@ -291,6 +336,7 @@ function makeRecord(input: {
   sources?: RecommendationSource[]
   verification?: RecommendationVerification
   reasons?: RecommendationReason[]
+  board?: RecommendationRecord['board']
 }): RecommendationRecord {
   const evidenceKey = input.channel === 'technical' ? 'technical' : input.channel === 'event' ? 'event' : input.channel === 'opinion' ? 'opinion' : input.channel === 'fund' ? 'fund' : 'dragon'
   const reasons = dedupeReasons(input.reasons ?? [])
@@ -317,6 +363,7 @@ function makeRecord(input: {
     reasons: reasons.length ? reasons : undefined,
     reasonSummary: reasons.length ? summarizeReasons(reasons) : undefined,
     benchmark: 'sh000001',
+    board: input.board,
   }
 }
 
@@ -444,6 +491,138 @@ function buildFundRecords(): RecommendationRecord[] {
   )
 }
 
+/**
+ * 涨停板通道：把「谁先涨停、谁连板、哪个板块成梯队」翻译成可推荐的标的。
+ *   - leader  龙头：板块内辨识度第一且连板 >= 2
+ *   - limit_up 打板：有板块效应（同板块 >= 3 家涨停）的首板 / 低板
+ *   - relay   补涨：热点板块内尚未涨停、量价配合的二线
+ */
+function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): RecommendationRecord[] {
+  const records: RecommendationRecord[] = []
+  const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
+  const phase = board.sentiment.phase
+  const sentimentBase = {
+    sentimentPhase: phase,
+    sentimentScore: board.sentiment.score,
+  }
+
+  for (const item of board.limitUp) {
+    const stock = stockMap.get(item.code)
+    if (!stock) continue
+    const sectorTier = item.topSectorCount ?? 0
+    const isLeader = item.isSectorLeader && item.board >= 2
+    const hasSectorEffect = sectorTier >= 3
+    if (!isLeader && !hasSectorEffect) continue
+    if (item.board >= 6) continue // 6 板以上空间有限，交给观察名单
+    const style: RecommendationStyle = isLeader ? 'leader' : 'limit_up'
+    const reasonText = isLeader
+      ? '板块龙头：' + item.board + ' 连板，' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停'
+      : '板块效应打板：' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停，本股今日涨停'
+    records.push(makeRecord({
+      id: 'board:' + style + ':' + item.code,
+      code: item.code,
+      name: item.name,
+      style,
+      channel: 'board',
+      thesis: reasonText,
+      score: Math.max(45, Math.min(98, item.recognition)),
+      evidence: [
+        item.board > 1 ? item.board + ' 连板' : '首板',
+        (item.firstSealAt ? item.firstSealAt + ' 封板' : '封板时间未知') + (item.breakCount ? '，炸板 ' + item.breakCount + ' 次' : ''),
+        (item.topSector ?? '无板块') + ' 涨停 ' + sectorTier + ' 家',
+        '成交额 ' + (item.amount / 1e8).toFixed(1) + '亿，换手 ' + item.turnover.toFixed(1) + '%',
+      ],
+      price: item.price,
+      changePct: item.changePct,
+      industry: item.industry,
+      reasons: boardReasons({
+        board: item.board,
+        isSectorLeader: item.isSectorLeader,
+        topSector: item.topSector,
+        topSectorCount: item.topSectorCount,
+        firstSealAt: item.firstSealAt,
+        breakCount: item.breakCount,
+        recognition: item.recognition,
+        sectorNames: item.concepts,
+        ...sentimentBase,
+      }),
+      board: {
+        height: item.board,
+        recognition: item.recognition,
+        isSectorLeader: item.isSectorLeader,
+        topSector: item.topSector,
+        topSectorCount: item.topSectorCount,
+        firstSealAt: item.firstSealAt,
+        breakCount: item.breakCount,
+        phase,
+      },
+    }))
+  }
+
+  // 补涨：热点板块（>= 3 家涨停）内未涨停、量价配合的跟随标的
+  const hotSectors = board.sectors.filter((sector) => sector.limitUpCount >= 3)
+  const used = new Set(records.map((record) => record.code))
+  const limitUpCodes = new Set(board.limitUp.map((item) => item.code))
+  const candidates = new Map<string, { stock: SnapshotStock; sector: SectorBoard }>()
+  for (const sector of hotSectors) {
+    for (const stock of stocks) {
+      const code = stock.code.toLowerCase()
+      if (limitUpCodes.has(code) || used.has(code)) continue
+      if (stock.changePct < 1 || stock.changePct >= 9) continue
+      if (stock.volumeRatio < 1.1 || stock.amount < 2e8 || stock.turnover < 2) continue
+      const match = sector.type === 'industry'
+        ? stock.industry === sector.name
+        : (stock.concepts ?? []).includes(sector.name)
+      if (!match) continue
+      const existing = candidates.get(code)
+      if (!existing || existing.sector.limitUpCount < sector.limitUpCount) candidates.set(code, { stock, sector })
+    }
+  }
+  for (const { stock, sector } of [...candidates.values()]
+    .sort((a, b) => b.sector.limitUpCount - a.sector.limitUpCount || b.stock.changePct - a.stock.changePct)
+    .slice(0, 20)) {
+    records.push(makeRecord({
+      id: 'board:relay:' + stock.code,
+      code: stock.code,
+      name: stock.name,
+      style: 'relay',
+      channel: 'board',
+      thesis: '板块补涨：' + sector.name + ' 今日 ' + sector.limitUpCount + ' 家涨停，本股尚未启动',
+      score: Math.max(42, Math.min(88, 45 + sector.limitUpCount * 4 + Math.min(12, stock.changePct * 2))),
+      evidence: [
+        '板块 ' + sector.name + ' 涨停 ' + sector.limitUpCount + ' 家，最高 ' + sector.maxBoard + ' 板',
+        '板块龙头 ' + sector.leaderName,
+        '本股涨跌 ' + stock.changePct.toFixed(2) + '%，量比 ' + stock.volumeRatio.toFixed(2),
+        (stock.mainNetInflow ?? 0) > 0
+          ? '主力净流入 ' + ((stock.mainNetInflow ?? 0) / 1e8).toFixed(2) + '亿'
+          : '主力净流出 ' + (Math.abs(stock.mainNetInflow ?? 0) / 1e8).toFixed(2) + '亿',
+      ],
+      price: stock.price,
+      changePct: stock.changePct,
+      industry: stock.industry,
+      reasons: boardReasons({
+        board: 0,
+        kind: 'relay',
+        isSectorLeader: false,
+        topSector: sector.name,
+        topSectorCount: sector.limitUpCount,
+        recognition: 0,
+        sectorNames: [sector.name],
+        ...sentimentBase,
+      }),
+      board: {
+        height: 0,
+        recognition: 0,
+        isSectorLeader: false,
+        topSector: sector.name,
+        topSectorCount: sector.limitUpCount,
+        phase,
+      },
+    }))
+  }
+  return records
+}
+
 function buildDragonRecords(): RecommendationRecord[] {
   return buildDragonTigerReco({ limit: 30, minNetValue: 0 }).items.map((item) =>
     makeRecord({
@@ -500,6 +679,7 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
     verification,
     reasons: reasons.length ? reasons : undefined,
     reasonSummary: reasons.length ? summarizeReasons(reasons) : undefined,
+    board: target.board ?? incoming.board,
   }
 }
 
@@ -518,13 +698,17 @@ function averageDimensionWeight(item: RecommendationRecord, dimensionWeights: Re
   return Math.max(0.7, Math.min(1.3, sum / dimensions.length))
 }
 
-export function buildTodayRecommendations(stocks: SnapshotStock[], options: { coolingDays?: number } = {}): RecommendationListResponse {
+export function buildTodayRecommendations(
+  stocks: SnapshotStock[],
+  options: { coolingDays?: number; board?: LimitUpBoard } = {},
+): RecommendationListResponse {
   const all = [
     ...buildTechnicalRecords(stocks),
     ...buildEventRecords(stocks),
     ...buildOpinionRecords(stocks),
     ...buildFundRecords(),
     ...buildDragonRecords(),
+    ...(options.board ? buildBoardRecords(stocks, options.board) : []),
   ]
   const byCode = new Map<string, RecommendationRecord>()
   for (const item of all) {
@@ -569,6 +753,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
           weight: reason.weight,
         })),
         fundamentals: item.fundamentals,
+        board: item.board ? { height: item.board.height, phase: item.board.phase } : undefined,
       },
       reasonGuard,
     )
@@ -597,6 +782,14 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     styleWeights.trend *= 1.08
     styleWeights.limit_up *= 1.1
     styleWeights.leader *= 1.08
+  }
+  // 有涨停板/情绪数据时，用「情绪相位」替代二元温度做更细的取向调整
+  const phase = options.board?.sentiment.phase
+  if (phase) {
+    const multipliers = PHASE_STYLE_MULTIPLIER[phase]
+    for (const [style, factor] of Object.entries(multipliers)) {
+      if (style in styleWeights) styleWeights[style] *= factor
+    }
   }
   const rawItems = eligible.sort((a, b) => b.score - a.score || (b.changePct ?? 0) - (a.changePct ?? 0))
   const items = rawItems.map((item) => {
@@ -629,6 +822,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     limit_up: [],
     pullback: [],
     leader: [],
+    relay: [],
     event: [],
     fund: [],
     opinion: [],
@@ -649,7 +843,7 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
   }
   const top = STYLE_KEYS.flatMap((key) => grouped[key]).sort((a, b) => b.score - a.score).slice(0, 80)
 
-  const observingTop = observing.slice(0, 20)
+  const observingTop = observing.slice(0, 80)
   // 记录被拦标的（含连续拦截天数），供观察名单展示与回流判断
   try {
     trackBlocked(observingTop)
@@ -683,5 +877,17 @@ export function buildTodayRecommendations(stocks: SnapshotStock[], options: { co
     observing: observingTop,
     recycled,
     staleObserving,
+    sentiment: options.board
+      ? {
+          phase: options.board.sentiment.phase,
+          score: options.board.sentiment.score,
+          limitUpCount: options.board.sentiment.limitUpCount,
+          limitDownCount: options.board.sentiment.limitDownCount,
+          brokenRate: options.board.sentiment.brokenRate,
+          maxBoard: options.board.sentiment.maxBoard,
+          yesterdayPremium: options.board.sentiment.yesterdayPremium,
+          promotionRate: options.board.sentiment.promotionRate,
+        }
+      : undefined,
   }
 }

@@ -44,6 +44,7 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   limit_up: 1,
   pullback: 1,
   leader: 1,
+  relay: 1,
   event: 1,
   fund: 1,
   opinion: 1,

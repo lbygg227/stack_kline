@@ -135,6 +135,8 @@ export interface GuardInput {
     debtRatio?: number
   }
   changePct?: number
+  /** 涨停板上下文：连板高度与情绪相位 */
+  board?: { height?: number; phase?: string }
 }
 
 /**
@@ -155,6 +157,11 @@ export function detectVetoes(input: GuardInput): string[] {
       vetoes.push('当日主力净占比 ' + f.mainNetInflowPct.toFixed(2) + '%，资金正在流出')
     }
   }
+  const height = input.board?.height ?? 0
+  const phase = input.board?.phase
+  if (height >= 4 && (phase === '退潮' || phase === '冰点')) {
+    vetoes.push('情绪' + phase + '期且已是 ' + height + ' 连板，高位接力风险过大')
+  }
   return vetoes
 }
 
@@ -173,6 +180,12 @@ export function detectWarnings(input: GuardInput): string[] {
   }
   if ((input.changePct ?? 0) >= 9.8 && input.style !== 'limit_up') {
     warnings.push('当日涨幅 ' + (input.changePct ?? 0).toFixed(1) + '%，追高风险')
+  }
+  // 高位板 + 情绪退潮：接力风险显著大于收益（硬性拦截在 detectVetoes 中）
+  const height = input.board?.height ?? 0
+  const phase = input.board?.phase
+  if (height >= 3 && (phase === '退潮' || phase === '冰点')) {
+    warnings.push('情绪' + phase + '期做 ' + height + ' 连板，注意次日分歧')
   }
   return warnings
 }
