@@ -44,8 +44,19 @@ const ladderGroups = computed(() => {
 })
 
 const sectors = computed(() =>
-  (board.value?.sectors ?? []).filter((sector) => sector.type === sectorType.value).slice(0, 24),
+  (board.value?.sectors ?? [])
+    .filter((sector) => sector.type === sectorType.value && sector.name !== '其他')
+    .sort((a, b) => (b.heat ?? 0) - (a.heat ?? 0) || b.limitUpCount - a.limitUpCount)
+    .slice(0, 30),
 )
+
+const ladderText = (ladder?: Record<string, number>) =>
+  ladder
+    ? Object.entries(ladder)
+        .sort((a, b) => Number(b[0]) - Number(a[0]))
+        .map(([board, count]) => board + '板 ' + count)
+        .join(' / ')
+    : '—'
 
 async function load() {
   loading.value = true
@@ -212,18 +223,26 @@ onMounted(() => {
         </div>
         <table class="lu-table">
           <thead>
-            <tr><th>板块</th><th class="num">涨停家数</th><th class="num">最高板</th><th>龙头</th><th class="num">平均涨幅</th><th class="num">成交额</th></tr>
+            <tr>
+              <th>板块</th><th class="num">热度</th><th class="num">涨停家数</th><th class="num">最高板</th>
+              <th>连板梯队</th><th>龙头</th><th class="num">板块主力净流入</th><th>首封</th>
+              <th class="num">炸板</th><th class="num">平均涨幅</th>
+            </tr>
           </thead>
           <tbody>
             <tr v-for="sector in sectors" :key="sector.key">
               <td>{{ sector.name }}</td>
+              <td class="num"><b :class="sector.heat >= 60 ? 'up' : ''">{{ sector.heat }}</b></td>
               <td class="num"><b class="up">{{ sector.limitUpCount }}</b></td>
               <td class="num">{{ sector.maxBoard }}</td>
+              <td class="sector-ladder">{{ ladderText(sector.ladder) }}</td>
               <td>{{ sector.leaderName }}</td>
+              <td class="num" :class="sector.mainNetInflow >= 0 ? 'up' : 'down'">{{ fmtYi(sector.mainNetInflow) }}</td>
+              <td>{{ sector.firstSealAt || '—' }}</td>
+              <td class="num" :class="sector.brokenCount ? 'down' : ''">{{ sector.brokenCount }}</td>
               <td class="num" :class="sector.avgChangePct >= 0 ? 'up' : 'down'">{{ sector.avgChangePct }}%</td>
-              <td class="num">{{ fmtYi(sector.totalAmount) }}</td>
             </tr>
-            <tr v-if="!sectors.length"><td colspan="6" class="lu-empty-cell">暂无板块梯队</td></tr>
+            <tr v-if="!sectors.length"><td colspan="10" class="lu-empty-cell">暂无板块梯队</td></tr>
           </tbody>
         </table>
       </section>
@@ -351,8 +370,8 @@ onMounted(() => {
 
 <style scoped>
 .lu-page { height: 100%; min-height: 0; overflow-y: auto; background: var(--bg); }
-.lu-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 20px 10px; }
-.lu-head h2 { margin: 0 0 4px; font-size: 18px; }
+.lu-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 8px 16px 6px; }
+.lu-head h2 { margin: 0; font-size: 15px; }
 .lu-head p { margin: 0; font-size: 12px; color: var(--text-3); max-width: 640px; line-height: 1.6; }
 .lu-actions { display: flex; gap: 8px; }
 .lu-error { margin: 12px 20px 0; padding: 10px 12px; border-radius: 6px; background: rgba(239,35,42,.08); color: var(--down); font-size: 12px; }
@@ -378,6 +397,7 @@ onMounted(() => {
 .lu-tabs { display: flex; gap: 8px; padding: 12px 20px 0; }
 .lu-tabs button { padding: 5px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); font-size: 12px; cursor: pointer; }
 .lu-tabs button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+.sector-ladder { font-size: 11px; color: var(--text-2); white-space: nowrap; }
 .lu-subtabs { display: flex; gap: 8px; margin-bottom: 8px; }
 .lu-subtabs button { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); font-size: 11px; cursor: pointer; }
 .lu-subtabs button.active { border-color: var(--primary); color: var(--primary); }

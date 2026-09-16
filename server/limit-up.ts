@@ -84,6 +84,16 @@ export interface SectorBoard {
   leaderName: string
   /** 板块内涨停股代码（按板数、辨识度排序） */
   members: string[]
+  /** 板块内连板梯队：1板 N 家、2板 N 家…… */
+  ladder: Record<string, number>
+  /** 板块成员当日主力净流入合计（元） */
+  mainNetInflow: number
+  /** 板块内最早的首次封板时间 */
+  firstSealAt?: string
+  /** 板块内炸板家数（板块退潮的早期信号） */
+  brokenCount: number
+  /** 板块热度分 0-100：涨停家数 + 最高板 + 资金 + 封板时间 - 炸板 */
+  heat: number
 }
 
 export type SentimentPhase = '冰点' | '启动' | '发酵' | '高潮' | '退潮'
@@ -276,11 +286,20 @@ export function buildLimitUpBoard(stocks: SnapshotStock[], options: BuildBoardOp
       leaderCode: '',
       leaderName: '',
       members: [],
+      ladder: {},
+      mainNetInflow: 0,
+      brokenCount: 0,
+      heat: 0,
     }
     sector.limitUpCount += 1
     sector.maxBoard = Math.max(sector.maxBoard, item.board)
     sector.avgChangePct += item.changePct
     sector.totalAmount += stock.amount
+    sector.mainNetInflow += stock.mainNetInflow ?? 0
+    sector.ladder[String(item.board)] = (sector.ladder[String(item.board)] ?? 0) + 1
+    if (item.firstSealAt && (!sector.firstSealAt || item.firstSealAt < sector.firstSealAt)) {
+      sector.firstSealAt = item.firstSealAt
+    }
     sector.members.push(item.code)
     sectorMap.set(key, sector)
   }
@@ -291,13 +310,41 @@ export function buildLimitUpBoard(stocks: SnapshotStock[], options: BuildBoardOp
     for (const concept of item.concepts) bump('concept', concept, item, stock)
   }
 
+  // 板块炸板家数：同板块里触板未封的标的（退潮的早期信号）
+  for (const stock of brokenStocks) {
+    if (stock.industry) {
+      const industryKey = 'industry:' + stock.industry
+      const sector = sectorMap.get(industryKey)
+      if (sector) sector.brokenCount += 1
+    }
+    for (const concept of (stock.concepts ?? []).slice(0, 8)) {
+      const sector = sectorMap.get('concept:' + concept)
+      if (sector) sector.brokenCount += 1
+    }
+  }
+  // 板块热度：按占比归一化，避免大板块全部顶到 100 分而失去区分度
+  //   涨停家数占比 45 + 最高板 20 + 板块资金 ±10 + 封板时间 15 + 炸板惩罚 -10
+  const maxLimitUpCount = Math.max(1, ...[...sectorMap.values()].map((sector) => sector.limitUpCount))
+  for (const sector of sectorMap.values()) {
+    const countPart = sector.limitUpCount / maxLimitUpCount * 45
+    const boardPart = Math.min(6, sector.maxBoard) / 6 * 20
+    const inflowPart = Math.max(-10, Math.min(10, sector.mainNetInflow / 1e8 * 0.5))
+    const timePart = sector.firstSealAt
+      ? sector.firstSealAt <= '10:00' ? 15 : sector.firstSealAt <= '11:30' ? 9 : sector.firstSealAt <= '14:00' ? 4 : 0
+      : 0
+    const brokenPenalty = Math.min(12, sector.brokenCount * 2)
+    sector.heat = Math.max(0, Math.min(100, Math.round(countPart + boardPart + inflowPart + timePart - brokenPenalty)))
+  }
+
   // 辨识度：连板 40 + 板块涨停家数 20 + 成交额排名 20 + 封板时间 15（无分时给 6）+ 炸板扣分 5
   const sortedByAmount = [...limitUp].sort((a, b) => b.amount - a.amount)
   const amountRank = new Map(sortedByAmount.map((item, i) => [item.code, i]))
   for (const item of limitUp) {
-    const bestSector = [...sectorMap.values()]
-      .filter((sector) => sector.members.includes(item.code))
-      .sort((a, b) => b.limitUpCount - a.limitUpCount || b.maxBoard - a.maxBoard)[0]
+    // 归属板块：优先取有明确名称的板块（「其他」是行业映射缺失的兜底，不该作为板块效应依据）
+    const ownSectors = [...sectorMap.values()].filter((sector) => sector.members.includes(item.code))
+    const namedSectors = ownSectors.filter((sector) => sector.name !== '其他')
+    const bestSector = (namedSectors.length ? namedSectors : ownSectors)
+      .sort((a, b) => b.heat - a.heat || b.limitUpCount - a.limitUpCount || b.maxBoard - a.maxBoard)[0]
     item.topSector = bestSector?.name
     item.topSectorCount = bestSector?.limitUpCount
     const boardScore = Math.min(40, item.board * 14)
@@ -323,7 +370,6 @@ export function buildLimitUpBoard(stocks: SnapshotStock[], options: BuildBoardOp
     sector.members = members.map((item) => item.code)
     sector.avgChangePct = Number((sector.avgChangePct / sector.limitUpCount).toFixed(2))
   }
-
   const ladder: Record<string, number> = {}
   for (const item of limitUp) ladder[String(item.board)] = (ladder[String(item.board)] ?? 0) + 1
 

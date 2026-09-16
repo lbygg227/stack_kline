@@ -17,6 +17,22 @@ const error = ref('')
 const data = ref<RecommendationListResponse | null>(null)
 const selected = ref<RecommendationRecord | null>(null)
 const showObserving = ref(false)
+const selectedSector = ref('')
+const hotSectors = computed(() => data.value?.hotSectors ?? [])
+
+function sectorMatches(item: RecommendationRecord, sectorName: string): boolean {
+  if (!sectorName) return true
+  if (item.board?.topSector === sectorName) return true
+  return item.industry === sectorName
+}
+
+const visibleItems = computed(() =>
+  rankedItems.value.filter((item) => sectorMatches(item, selectedSector.value)),
+)
+
+function toggleSector(name: string) {
+  selectedSector.value = selectedSector.value === name ? '' : name
+}
 const showRecycled = ref(false)
 const staleMap = computed(() => {
   const map: Record<string, number> = {}
@@ -221,6 +237,24 @@ onMounted(() => void load())
       </span>
     </div>
 
+    <div v-if="hotSectors.length" class="sector-strip">
+      <span class="sector-title">热点板块</span>
+      <button class="sector-chip" :class="{ active: !selectedSector }" @click="selectedSector = ''">全部</button>
+      <button
+        v-for="sector in hotSectors"
+        :key="sector.key"
+        class="sector-chip"
+        :class="{ active: selectedSector === sector.name }"
+        :title="sector.name + ' 涨停 ' + sector.limitUpCount + ' 家，最高 ' + sector.maxBoard + ' 板，龙头 ' + sector.leaderName"
+        @click="toggleSector(sector.name)"
+      >
+        <b>{{ sector.name }}</b>
+        <span class="sector-heat">{{ sector.heat }}</span>
+        <span class="sector-meta">{{ sector.limitUpCount }}家 · {{ sector.maxBoard }}板</span>
+        <span class="sector-leader">龙头 {{ sector.leaderName }}</span>
+      </button>
+    </div>
+
     <div v-if="data" class="today-main">
       <div class="rec-table-wrap">
         <div v-if="data.recycled?.length" class="recycle-strip">
@@ -278,13 +312,14 @@ onMounted(() => void load())
               <th class="num">目标</th>
               <th class="num">止损</th>
               <th class="num">周期</th>
+              <th>板块</th>
               <th>核心理由</th>
               <th>来源</th>
             </tr>
           </thead>
           <tbody>
             <tr
-              v-for="item in rankedItems"
+              v-for="item in visibleItems"
               :key="item.id"
               :class="{ active: selected?.id === item.id }"
               @click="selected = item"
@@ -308,6 +343,15 @@ onMounted(() => void load())
               <td class="num">{{ fmt(item.levels.target) }}</td>
               <td class="num down">{{ fmt(item.levels.stopLoss) }}</td>
               <td class="num">{{ item.horizonDays }}日</td>
+              <td class="sector-cell">
+                <template v-if="item.board?.topSector">
+                  <span class="sector-name">{{ item.board.topSector }}</span>
+                  <span class="sector-count">{{ item.board.topSectorCount }}家</span>
+                  <span v-if="item.board.isSectorLeader" class="leader-tag">龙头</span>
+                </template>
+                <span v-else-if="item.industry" class="sector-name muted">{{ item.industry }}</span>
+                <span v-else class="flat">—</span>
+              </td>
               <td class="reason-cell">
                 <span v-for="label in (item.reasonSummary?.topLabels ?? []).slice(0, 2)" :key="label" class="reason-tag">{{ label }}</span>
                 <span v-if="!item.reasonSummary?.topLabels?.length" class="flat">--</span>
@@ -318,7 +362,9 @@ onMounted(() => void load())
             </tr>
           </tbody>
         </table>
-        <div v-if="rankedItems.length === 0" class="today-state">暂无可推荐标的</div>
+        <div v-if="visibleItems.length === 0" class="today-state">
+          {{ selectedSector ? '该板块暂无推荐标的（可点击「全部」查看全部）' : '暂无可推荐标的' }}
+        </div>
       </div>
 
       <Transition name="drawer">
@@ -472,6 +518,35 @@ onMounted(() => void load())
               </template>
             </section>
 
+            <section v-if="selected.board?.topSector" class="drawer-section">
+              <h4>板块效应</h4>
+              <div class="sector-detail">
+                <div class="level-row">
+                  <span>所属板块</span>
+                  <b>{{ selected.board.topSector }}
+                    <span v-if="selected.board.sectorHeat" class="sector-heat">热度 {{ selected.board.sectorHeat }}</span>
+                  </b>
+                </div>
+                <div class="level-row"><span>涨停家数</span><b>{{ selected.board.topSectorCount }} 家</b></div>
+                <div class="level-row">
+                  <span>连板梯队</span>
+                  <b v-if="selected.board.sectorLadder">
+                    {{ Object.entries(selected.board.sectorLadder).sort((a, b) => Number(b[0]) - Number(a[0])).map(([board, count]) => board + '板 ' + count + '家').join('、') }}
+                  </b>
+                  <b v-else>—</b>
+                </div>
+                <div class="level-row"><span>板块主力净流入</span>
+                  <b :class="(selected.board.sectorMainNetInflowYi ?? 0) >= 0 ? 'up' : 'down'">
+                    {{ (selected.board.sectorMainNetInflowYi ?? 0) >= 0 ? '+' : '' }}{{ selected.board.sectorMainNetInflowYi ?? 0 }} 亿
+                  </b>
+                </div>
+                <div class="level-row"><span>板块最早封板</span><b>{{ selected.board.sectorFirstSealAt || '—' }}</b></div>
+                <div class="level-row"><span>本股位置</span>
+                  <b>{{ selected.board.isSectorLeader ? '板块龙头（辨识度第一）' : '板块跟随标的' }}</b>
+                </div>
+              </div>
+            </section>
+
             <section class="drawer-section">
               <h4>关键价位</h4>
               <div class="level-row"><span>观察</span><b class="num">{{ fmt(selected.levels.entry) }}</b></div>
@@ -511,10 +586,10 @@ onMounted(() => void load())
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 18px 10px;
+  padding: 8px 16px 6px;
 }
-.today-head h2 { margin: 0 0 4px; font-size: 18px; }
-.today-head p { margin: 0; font-size: 12px; color: var(--text-3); }
+.today-head h2 { margin: 0; font-size: 15px; }
+.today-head p { margin: 2px 0 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .today-state { padding: 50px 20px; text-align: center; color: var(--text-3); }
 
 .market-temp {
@@ -591,6 +666,39 @@ onMounted(() => void load())
   color: var(--text-3);
   font-size: 10px;
 }
+.sector-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+.sector-title { font-size: 12px; font-weight: 600; color: var(--text-2); margin-right: 2px; }
+.sector-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--panel-2);
+  font-size: 11px;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.sector-chip:hover { border-color: var(--primary); }
+.sector-chip.active { border-color: var(--primary); background: rgba(30,111,255,.1); color: var(--primary); }
+.sector-chip b { font-size: 11px; font-weight: 600; }
+.sector-heat { padding: 0 5px; border-radius: 8px; background: rgba(239,35,42,.1); color: var(--up); font-size: 10px; font-weight: 600; }
+.sector-meta { color: var(--text-3); }
+.sector-leader { color: var(--text-3); }
+.sector-cell { white-space: nowrap; }
+.sector-name { font-size: 11px; }
+.sector-name.muted { color: var(--text-3); }
+.sector-count { margin-left: 4px; font-size: 10px; color: var(--text-3); }
+.leader-tag { margin-left: 4px; padding: 0 5px; border-radius: 8px; background: rgba(239,35,42,.1); color: var(--up); font-size: 10px; }
 .reason-cell { max-width: 220px; white-space: normal; }
 .reason-tag {
   display: inline-block;
@@ -793,7 +901,7 @@ onMounted(() => void load())
 .drawer-enter-from, .drawer-leave-to { transform: translateX(24px); opacity: 0; }
 
 @media (max-width: 820px) {
-  .today-head { padding: 12px 12px 8px; }
+  .today-head { padding: 8px 12px 6px; }
   .market-temp { padding: 8px 12px; }
   .rec-table th, .rec-table td { padding: 6px 8px; }
   .rec-drawer {

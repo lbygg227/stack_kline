@@ -134,6 +134,11 @@ export interface RecommendationRecord {
     consensusScore?: number
     /** 命中的资金线数量 */
     consensusLines?: number
+    /** 所属板块热度与梯队（板块效应） */
+    sectorHeat?: number
+    sectorLadder?: Record<string, number>
+    sectorFirstSealAt?: string
+    sectorMainNetInflowYi?: number
   }
 }
 
@@ -158,6 +163,24 @@ export interface RecommendationListResponse {
   observing: RecommendationRecord[]
   /** 涨停板情绪相位（有数据时） */
   sentiment?: { phase: string; score: number; limitUpCount: number; limitDownCount: number; brokenRate: number; maxBoard: number; yesterdayPremium: number; promotionRate: number }
+  /** 今日热点板块（按热度排序，供前端板块效应展示与筛选） */
+  hotSectors?: Array<{
+    key: string
+    type: 'industry' | 'concept'
+    name: string
+    limitUpCount: number
+    maxBoard: number
+    leaderCode: string
+    leaderName: string
+    heat: number
+    avgChangePct: number
+    totalAmountYi: number
+    mainNetInflowYi: number
+    firstSealAt?: string
+    brokenCount: number
+    ladder: Record<string, number>
+    members: string[]
+  }>
   /** 从观察名单回到推荐的标的（条件已改善） */
   recycled: RecycledItem[]
   /** 连续多日被拦、理由可能长期不成立的标的 */
@@ -535,6 +558,8 @@ function buildBoardRecords(
     if (item.board >= 6) continue // 6 板以上空间有限，交给观察名单
     const style: RecommendationStyle = isLeader ? 'leader' : 'limit_up'
     const agree = consensus?.get(item.code)
+    // 本股所属板块的完整信息（热度/梯队/资金），用于把「板块效应」写进推荐理由
+    const topSectorInfo = board.sectors.find((sector) => sector.name === item.topSector)
     const reasonText = (isLeader
       ? '板块龙头：' + item.board + ' 连板，' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停'
       : '板块效应打板：' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停，本股今日涨停') +
@@ -567,6 +592,10 @@ function buildBoardRecords(
           breakCount: item.breakCount,
           recognition: item.recognition,
           sectorNames: item.concepts,
+          sectorLadder: topSectorInfo?.ladder,
+          sectorFirstSealAt: topSectorInfo?.firstSealAt,
+          sectorMainNetInflowYi: topSectorInfo ? Number((topSectorInfo.mainNetInflow / 1e8).toFixed(2)) : undefined,
+          sectorHeat: topSectorInfo?.heat,
           ...sentimentBase,
         }),
         ...(agree && agree.lineCount >= 2 ? [consensusReason(agree)] : []),
@@ -582,6 +611,10 @@ function buildBoardRecords(
         phase,
         consensusScore: agree?.score,
         consensusLines: agree?.lineCount,
+        sectorHeat: topSectorInfo?.heat,
+        sectorLadder: topSectorInfo?.ladder,
+        sectorFirstSealAt: topSectorInfo?.firstSealAt,
+        sectorMainNetInflowYi: topSectorInfo ? Number((topSectorInfo.mainNetInflow / 1e8).toFixed(2)) : undefined,
       },
     }))
   }
@@ -648,6 +681,10 @@ function buildBoardRecords(
         topSector: sector.name,
         topSectorCount: sector.limitUpCount,
         phase,
+        sectorHeat: sector.heat,
+        sectorLadder: sector.ladder,
+        sectorFirstSealAt: sector.firstSealAt,
+        sectorMainNetInflowYi: Number((sector.mainNetInflow / 1e8).toFixed(2)),
       },
     }))
   }
@@ -932,6 +969,29 @@ export function buildTodayRecommendations(
     observing: observingTop,
     recycled,
     staleObserving,
+    hotSectors: options.board
+      ? options.board.sectors
+          .filter((sector) => sector.limitUpCount >= 2 && sector.name !== '其他')
+          .sort((a, b) => b.heat - a.heat || b.limitUpCount - a.limitUpCount)
+          .slice(0, 12)
+          .map((sector) => ({
+            key: sector.key,
+            type: sector.type,
+            name: sector.name,
+            limitUpCount: sector.limitUpCount,
+            maxBoard: sector.maxBoard,
+            leaderCode: sector.leaderCode,
+            leaderName: sector.leaderName,
+            heat: sector.heat,
+            avgChangePct: sector.avgChangePct,
+            totalAmountYi: Number((sector.totalAmount / 1e8).toFixed(1)),
+            mainNetInflowYi: Number((sector.mainNetInflow / 1e8).toFixed(2)),
+            firstSealAt: sector.firstSealAt,
+            brokenCount: sector.brokenCount,
+            ladder: sector.ladder,
+            members: sector.members,
+          }))
+      : undefined,
     sentiment: options.board
       ? {
           phase: options.board.sentiment.phase,

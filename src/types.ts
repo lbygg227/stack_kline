@@ -1182,6 +1182,7 @@ export interface RecommendationRecord {
   appliedWeights?: { style: number; dimension: number; targetFactor: number; confidenceScale: number }
   benchmark?: string
   guard?: GuardDecision
+  board?: RecommendationBoardContext
 }
 
 export interface MarketTemperature {
@@ -1228,6 +1229,41 @@ export interface RecycledItem {
   currentNote: string
 }
 
+export interface HotSector {
+  key: string
+  type: 'industry' | 'concept'
+  name: string
+  limitUpCount: number
+  maxBoard: number
+  leaderCode: string
+  leaderName: string
+  heat: number
+  avgChangePct: number
+  totalAmountYi: number
+  mainNetInflowYi: number
+  firstSealAt?: string
+  brokenCount: number
+  ladder: Record<string, number>
+  members: string[]
+}
+
+export interface RecommendationBoardContext {
+  height: number
+  recognition: number
+  isSectorLeader: boolean
+  topSector?: string
+  topSectorCount?: number
+  firstSealAt?: string
+  breakCount?: number
+  phase?: string
+  consensusScore?: number
+  consensusLines?: number
+  sectorHeat?: number
+  sectorLadder?: Record<string, number>
+  sectorFirstSealAt?: string
+  sectorMainNetInflowYi?: number
+}
+
 export interface RecommendationListResponse {
   generatedAt: number
   total: number
@@ -1237,6 +1273,17 @@ export interface RecommendationListResponse {
   observing: RecommendationRecord[]
   recycled: RecycledItem[]
   staleObserving: Array<{ code: string; name: string; days: number; note: string }>
+  hotSectors?: HotSector[]
+  sentiment?: {
+    phase: SentimentPhase
+    score: number
+    limitUpCount: number
+    limitDownCount: number
+    brokenRate: number
+    maxBoard: number
+    yesterdayPremium: number
+    promotionRate: number
+  }
 }
 
 export interface PerfBucket {
@@ -1460,6 +1507,11 @@ export interface LimitUpSector {
   leaderCode: string
   leaderName: string
   members: string[]
+  ladder: Record<string, number>
+  mainNetInflow: number
+  firstSealAt?: string
+  brokenCount: number
+  heat: number
 }
 
 export interface LimitUpSentiment {

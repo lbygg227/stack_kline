@@ -257,6 +257,11 @@ export function boardReasons(item: {
   breakCount?: number
   recognition: number
   sectorNames?: string[]
+  /** 板块连板分布：{ '1': 3, '2': 1 } */
+  sectorLadder?: Record<string, number>
+  sectorFirstSealAt?: string
+  sectorMainNetInflowYi?: number
+  sectorHeat?: number
   sentimentPhase?: string
   sentimentScore?: number
 }): RecommendationReason[] {
@@ -290,16 +295,30 @@ export function boardReasons(item: {
       : '连板逻辑成立 → 次日高开或继续封板；若炸板或收盘跌破前一日涨停价则证伪',
   })
   if (item.topSector && (item.topSectorCount ?? 0) >= 2) {
+    const ladderText = item.sectorLadder
+      ? Object.entries(item.sectorLadder)
+          .sort((a, b) => Number(b[0]) - Number(a[0]))
+          .map(([board, count]) => board + '板 ' + count + ' 家')
+          .join('、')
+      : ''
     reasons.push({
       dimension: 'board',
       key: 'sector_effect',
       label: '板块效应（' + item.topSector + '）',
       detail:
         item.topSector + ' 今日 ' + item.topSectorCount + ' 家涨停' +
-        (item.isSectorLeader ? '，本股为板块内辨识度第一' : '，本股为跟随标的'),
-      weight: 0.28,
-      strength: Math.max(30, Math.min(90, 35 + (item.topSectorCount ?? 0) * 6 + (item.isSectorLeader ? 12 : 0))),
-      metrics: { sector: item.topSector, sectorLimitUpCount: item.topSectorCount ?? 0, isLeader: item.isSectorLeader ? 'yes' : 'no' },
+        (ladderText ? '（' + ladderText + '）' : '') +
+        (item.sectorFirstSealAt ? '，最早 ' + item.sectorFirstSealAt + ' 封板' : '') +
+        (typeof item.sectorMainNetInflowYi === 'number' ? '，板块主力净流入 ' + item.sectorMainNetInflowYi.toFixed(2) + '亿' : '') +
+        (item.isSectorLeader ? '；本股为板块内辨识度第一' : '；本股为跟随标的'),
+      weight: 0.3,
+      strength: Math.max(30, Math.min(92, 35 + (item.topSectorCount ?? 0) * 6 + (item.isSectorLeader ? 12 : 0) + Math.min(10, (item.sectorHeat ?? 0) / 10))),
+      metrics: {
+        sector: item.topSector,
+        sectorLimitUpCount: item.topSectorCount ?? 0,
+        sectorHeat: item.sectorHeat ?? 0,
+        isLeader: item.isSectorLeader ? 'yes' : 'no',
+      },
       expect: '板块效应成立 → 板块 3 日内仍有涨停家数，本股不弱于板块中位',
     })
   }
