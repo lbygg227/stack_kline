@@ -109,10 +109,15 @@ import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import {
   backtestLimitUpPools,
+  buildSectorSeries,
+  computeSectorTrends,
   loadLimitUpBacktest,
+  loadSectorHistory,
   rebuildDailyPools,
   saveLimitUpBacktest,
+  saveSectorHistory,
 } from './limit-up-history.ts'
+import { buildSectorPool } from './sector-pool.ts'
 import { buildCapitalConsensus, type CapitalConsensus } from './capital-consensus.ts'
 import {
   buildDailyDigest,
@@ -516,6 +521,48 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+        // ---- 板块趋势（历史序列） ----
+        if (path === '/api/sectors/trends') {
+          const file = loadSectorHistory()
+          if (!file) {
+            sendJson(res, 200, { cached: false, trends: [], error: '尚未生成板块序列，先调用 POST /api/limit-up/backtest 重算历史' })
+            return
+          }
+          const trends = computeSectorTrends(file, { limit: Number(url.searchParams.get('limit')) || 60 })
+          const kind = url.searchParams.get('type')
+          sendJson(res, 200, {
+            cached: true,
+            startDate: file.startDate,
+            endDate: file.endDate,
+            dates: file.dates,
+            trends: kind === 'concept' || kind === 'industry' ? trends.filter((item) => item.type === kind) : trends,
+          })
+          return
+        }
+
+        // ---- 板块内补涨池 ----
+        if (path === '/api/sectors/pool') {
+          const sector = (url.searchParams.get('sector') ?? '').trim()
+          if (!sector) {
+            sendJson(res, 400, { error: '缺少 sector 参数' })
+            return
+          }
+          const type = url.searchParams.get('type') === 'industry' ? 'industry' : 'concept'
+          try {
+            const result = buildSectorPool({
+              sector,
+              type,
+              stocks: service.stocksWithIndustry(),
+              board: currentLimitUpBoard(),
+              limit: Number(url.searchParams.get('limit')) || 30,
+            })
+            sendJson(res, 200, result)
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
         // ---- 涨停板与情绪周期 ----
         if (path === '/api/limit-up') {
           const force = url.searchParams.get('force') === '1'
@@ -554,6 +601,11 @@ export function marketDataPlugin(): Plugin {
               const { pools, universe } = await rebuildDailyPools({ nameOf: (code) => nameMap.get(code) })
               const result = backtestLimitUpPools(pools, { universe })
               saveLimitUpBacktest(result)
+              // 同步产出板块历史序列（近 66 个交易日），供板块趋势使用
+              const metaMap = new Map(stocks.map((stock) => [stock.code, { industry: stock.industry, concepts: stock.concepts }]))
+              saveSectorHistory(
+                buildSectorSeries(pools, (code) => metaMap.get(code) ?? { industry: undefined, concepts: [] }),
+              )
               console.log(
                 '[limit-up] 历史重算完成：' + result.startDate + ' ~ ' + result.endDate +
                 '（' + result.tradingDays + ' 个交易日）用时 ' + ((Date.now() - started) / 1000).toFixed(1) + 's',

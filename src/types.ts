@@ -1229,6 +1229,61 @@ export interface RecycledItem {
   currentNote: string
 }
 
+export interface SectorPoolItem {
+  code: string
+  name: string
+  price: number
+  changePct: number
+  turnover: number
+  volumeRatio: number
+  amountYi: number
+  mainNetInflowYi: number
+  consecutiveInflowDays: number
+  lagPct: number
+  score: number
+  reason: string
+  limitUp: boolean
+  boardHeight: number
+}
+
+export interface SectorPoolResult {
+  sector: {
+    name: string
+    type: 'industry' | 'concept'
+    heat: number
+    limitUpCount: number
+    maxBoard: number
+    leaderName: string
+    mainNetInflowYi: number
+  }
+  items: SectorPoolItem[]
+  stats: { members: number; limitUp: number; poolSize: number; excluded: number }
+}
+
+export interface SectorTrend {
+  name: string
+  type: 'industry' | 'concept'
+  today: number
+  yesterday: number
+  avgRecent: number
+  avgPrevious: number
+  streak: number
+  firstDate: string
+  activeRatio: number
+  trend: '升温' | '持平' | '退潮'
+  deltaPct: number
+  series: number[]
+}
+
+export interface SectorTrendsResponse {
+  cached: boolean
+  startDate?: string
+  endDate?: string
+  dates?: string[]
+  trends: SectorTrend[]
+  error?: string
+}
+
 export interface HotSector {
   key: string
   type: 'industry' | 'concept'

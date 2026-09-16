@@ -23,7 +23,10 @@ import { sessionDateOf } from './trading-day.ts'
 import { classifyPhase, limitPrices, type SentimentPhase } from './limit-up.ts'
 
 const CACHE_FILE = 'limit-up-backtest.json'
+const SECTOR_FILE = 'sector-history.json'
 const KLINE_DIR = 'kline-cache'
+/** 板块序列保留的交易日数（约 3 个月） */
+const SECTOR_SERIES_DAYS = 66
 
 export interface DayPool {
   date: string
@@ -395,6 +398,152 @@ export function backtestLimitUpPools(pools: DayPool[], options: BacktestOptions 
       '次日开盘买入假设能成交：一字板次日通常买不到，实际收益会低于统计值',
     ],
   }
+}
+
+export interface SectorSeriesPoint {
+  date: string
+  /** 该板块当日涨停家数 */
+  count: number
+  maxBoard: number
+}
+
+export interface SectorSeries {
+  name: string
+  type: 'industry' | 'concept'
+  points: SectorSeriesPoint[]
+}
+
+export interface SectorHistoryFile {
+  version: 1
+  updatedAt: number
+  startDate: string
+  endDate: string
+  /** 交易日升序 */
+  dates: string[]
+  sectors: SectorSeries[]
+}
+
+export interface SectorTrend {
+  name: string
+  type: 'industry' | 'concept'
+  today: number
+  yesterday: number
+  avgRecent: number
+  avgPrevious: number
+  /** 连续出现（有涨停）的交易日数 */
+  streak: number
+  /** 窗口内首次出现日期 */
+  firstDate: string
+  /** 窗口内有涨停的交易日占比（活跃度） */
+  activeRatio: number
+  trend: '升温' | '持平' | '退潮'
+  deltaPct: number
+  series: number[]
+}
+
+/** 由历史涨停池 + 当前标的元信息，产出每日板块涨停家数序列 */
+export function buildSectorSeries(
+  pools: DayPool[],
+  metaOf: (code: string) => { industry?: string; concepts?: string[] },
+  options: { days?: number } = {},
+): SectorHistoryFile {
+  const days = Math.max(5, Math.min(240, options.days ?? SECTOR_SERIES_DAYS))
+  const recent = pools.slice(-days)
+  const dates = recent.map((pool) => pool.date)
+  const map = new Map<string, SectorSeries>()
+  for (const pool of recent) {
+    const counted = new Map<string, { count: number; maxBoard: number }>()
+    for (const [code, board] of Object.entries(pool.limitUp)) {
+      const meta = metaOf(code)
+      const names: Array<{ name: string; type: 'industry' | 'concept' }> = []
+      if (meta.industry) names.push({ name: meta.industry, type: 'industry' })
+      for (const concept of meta.concepts ?? []) names.push({ name: concept, type: 'concept' })
+      for (const entry of names) {
+        const key = entry.type + ':' + entry.name
+        const current = counted.get(key) ?? { count: 0, maxBoard: 0 }
+        current.count += 1
+        current.maxBoard = Math.max(current.maxBoard, board)
+        counted.set(key, current)
+      }
+    }
+    for (const [key, value] of counted) {
+      const [type, name] = key.split(':') as ['industry' | 'concept', string]
+      const series = map.get(key) ?? { name, type, points: [] }
+      series.points.push({ date: pool.date, count: value.count, maxBoard: value.maxBoard })
+      map.set(key, series)
+    }
+  }
+  // 只保留出现次数足够、且最近仍在活跃的板块，避免噪音
+  const sectors = [...map.values()]
+    .filter((series) => series.points.length >= 3 && series.points.at(-1)?.count)
+    .sort((a, b) => (b.points.at(-1)?.count ?? 0) - (a.points.at(-1)?.count ?? 0))
+    .slice(0, 200)
+  return {
+    version: 1,
+    updatedAt: Date.now(),
+    startDate: dates[0] ?? '',
+    endDate: dates.at(-1) ?? '',
+    dates,
+    sectors,
+  }
+}
+
+export function saveSectorHistory(file: SectorHistoryFile): void {
+  writeJson(SECTOR_FILE, file)
+}
+
+export function loadSectorHistory(): SectorHistoryFile | null {
+  const raw = readJson<SectorHistoryFile>(SECTOR_FILE)
+  if (!raw || raw.version !== 1) return null
+  return raw
+}
+
+/** 计算板块趋势：近 3 日均值 vs 前 3 日均值 */
+export function computeSectorTrends(file: SectorHistoryFile, options: { limit?: number } = {}): SectorTrend[] {
+  const limit = Math.max(1, Math.min(200, options.limit ?? 60))
+  const dates = file.dates
+  const trends: SectorTrend[] = []
+  for (const sector of file.sectors) {
+    const byDate = new Map(sector.points.map((point) => [point.date, point.count]))
+    const series = dates.map((date) => byDate.get(date) ?? 0)
+    const last = series.at(-1) ?? 0
+    if (!last) continue
+    const yesterday = series.at(-2) ?? 0
+    const recent = series.slice(-3)
+    const previous = series.slice(-6, -3)
+    const avgRecent = average(recent)
+    const avgPrevious = previous.length ? average(previous) : avgRecent
+    let streak = 0
+    for (let index = series.length - 1; index >= 0; index--) {
+      if (series[index] > 0) streak++
+      else break
+    }
+    const firstIndex = series.findIndex((value) => value > 0)
+    const deltaPct = avgPrevious > 0 ? (avgRecent - avgPrevious) / avgPrevious * 100 : (avgRecent > 0 ? 100 : 0)
+    const trend: SectorTrend['trend'] = deltaPct >= 25 && avgRecent >= 2
+      ? '升温'
+      : deltaPct <= -25 || (last === 0)
+        ? '退潮'
+        : '持平'
+    trends.push({
+      name: sector.name,
+      type: sector.type,
+      today: last,
+      yesterday,
+      avgRecent: Number(avgRecent.toFixed(2)),
+      avgPrevious: Number(avgPrevious.toFixed(2)),
+      streak,
+      firstDate: firstIndex >= 0 ? dates[firstIndex] : '',
+      activeRatio: Number((series.filter((value) => value > 0).length / Math.max(1, series.length) * 100).toFixed(1)),
+      trend,
+      deltaPct: Number(deltaPct.toFixed(1)),
+      series: series.slice(-20),
+    })
+  }
+  return trends
+    .filter((item) => item.name !== '其他')
+    .sort((a, b) => b.today - a.today || b.deltaPct - a.deltaPct)
+    .slice(0, limit)
 }
 
 export function saveLimitUpBacktest(result: LimitUpBacktest): void {

@@ -27,6 +27,8 @@ import type {
   DragonTigerRankStatus,
   DragonTigerRecoResponse,
   AuthorStatsFile,
+  SectorPoolResult,
+  SectorTrendsResponse,
   LimitUpBacktest,
   LimitUpBoard,
   LimitUpSentiment,
@@ -843,6 +845,22 @@ export async function fetchLimitUpBoard(force = false, intraday = true): Promise
     consensus: Record<string, { score: number; lineCount: number; notes: string[] }>
     history: Array<{ date: string; sentiment: LimitUpSentiment }>
   }
+}
+
+export async function fetchSectorTrends(limit = 60): Promise<SectorTrendsResponse> {
+  const res = await fetch(`/api/sectors/trends?limit=${limit}`)
+  if (!res.ok) throw new Error(`sector trends http ${res.status}`)
+  return (await res.json()) as SectorTrendsResponse
+}
+
+export async function fetchSectorPool(sector: string, type: 'concept' | 'industry', limit = 30): Promise<SectorPoolResult> {
+  const params = new URLSearchParams({ sector, type, limit: String(limit) })
+  const res = await fetch(`/api/sectors/pool?${params.toString()}`)
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `sector pool http ${res.status}`)
+  }
+  return (await res.json()) as SectorPoolResult
 }
 
 export async function fetchAuthorStats(): Promise<AuthorStatsFile> {

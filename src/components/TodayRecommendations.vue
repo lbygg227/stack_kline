@@ -9,6 +9,7 @@ import type {
 } from '../types'
 import { useResearch } from '../composables/useResearch'
 import MarketBadge from './MarketBadge.vue'
+import SectorDetailDrawer from './SectorDetailDrawer.vue'
 
 const { openCandidate, goFullChart } = useResearch()
 
@@ -18,6 +19,7 @@ const data = ref<RecommendationListResponse | null>(null)
 const selected = ref<RecommendationRecord | null>(null)
 const showObserving = ref(false)
 const selectedSector = ref('')
+const sectorDetail = ref<{ name: string; type: 'concept' | 'industry' } | null>(null)
 const hotSectors = computed(() => data.value?.hotSectors ?? [])
 
 function sectorMatches(item: RecommendationRecord, sectorName: string): boolean {
@@ -32,6 +34,10 @@ const visibleItems = computed(() =>
 
 function toggleSector(name: string) {
   selectedSector.value = selectedSector.value === name ? '' : name
+}
+
+function openSectorDetail(sector: { name: string; type: 'concept' | 'industry' }) {
+  sectorDetail.value = sector
 }
 const showRecycled = ref(false)
 const staleMap = computed(() => {
@@ -247,11 +253,17 @@ onMounted(() => void load())
         :class="{ active: selectedSector === sector.name }"
         :title="sector.name + ' 涨停 ' + sector.limitUpCount + ' 家，最高 ' + sector.maxBoard + ' 板，龙头 ' + sector.leaderName"
         @click="toggleSector(sector.name)"
+        @dblclick="openSectorDetail({ name: sector.name, type: sector.type })"
       >
         <b>{{ sector.name }}</b>
         <span class="sector-heat">{{ sector.heat }}</span>
         <span class="sector-meta">{{ sector.limitUpCount }}家 · {{ sector.maxBoard }}板</span>
         <span class="sector-leader">龙头 {{ sector.leaderName }}</span>
+        <span
+          class="sector-more"
+          title="查看板块详情（补涨池 / 涨停梯队 / 板块趋势）"
+          @click.stop="openSectorDetail({ name: sector.name, type: sector.type })"
+        >详情</span>
       </button>
     </div>
 
@@ -569,12 +581,23 @@ onMounted(() => void load())
           </div>
         </aside>
       </Transition>
+
+      <Transition name="drawer">
+        <SectorDetailDrawer
+          v-if="sectorDetail"
+          :sector="sectorDetail.name"
+          :type="sectorDetail.type"
+          :board="data?.items ? null : null"
+          @close="sectorDetail = null"
+        />
+      </Transition>
     </div>
   </div>
 </template>
 
 <style scoped>
 .today {
+  position: relative;
   height: 100%;
   min-height: 0;
   display: flex;
@@ -694,6 +717,7 @@ onMounted(() => void load())
 .sector-heat { padding: 0 5px; border-radius: 8px; background: rgba(239,35,42,.1); color: var(--up); font-size: 10px; font-weight: 600; }
 .sector-meta { color: var(--text-3); }
 .sector-leader { color: var(--text-3); }
+.sector-more { padding: 0 6px; border-radius: 8px; background: rgba(30,111,255,.1); color: var(--primary); font-size: 10px; }
 .sector-cell { white-space: nowrap; }
 .sector-name { font-size: 11px; }
 .sector-name.muted { color: var(--text-3); }

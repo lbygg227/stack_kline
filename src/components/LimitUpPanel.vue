@@ -1,7 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchLimitUpBacktest, fetchLimitUpBoard, rebuildLimitUpBacktest } from '../api'
-import type { BoardStat, LimitUpBacktest, LimitUpBoard, LimitUpItem, SentimentPhase } from '../types'
+import { fetchLimitUpBacktest, fetchLimitUpBoard, fetchSectorTrends, rebuildLimitUpBacktest } from '../api'
+import SectorDetailDrawer from './SectorDetailDrawer.vue'
+import type {
+  BoardStat,
+  LimitUpBacktest,
+  LimitUpBoard,
+  LimitUpItem,
+  SectorTrend,
+  SentimentPhase,
+} from '../types'
 import MarketBadge from './MarketBadge.vue'
 import { useResearch } from '../composables/useResearch'
 
@@ -12,7 +20,11 @@ const consensus = ref<Record<string, { score: number; lineCount: number; notes: 
 const history = ref<Array<{ date: string; sentiment: LimitUpBoard['sentiment'] }>>([])
 const loading = ref(false)
 const error = ref('')
-const activeTab = ref<'ladder' | 'sector' | 'broken' | 'backtest'>('ladder')
+const activeTab = ref<'ladder' | 'sector' | 'broken' | 'trend' | 'backtest'>('ladder')
+const sectorDetail = ref<{ name: string; type: 'concept' | 'industry' } | null>(null)
+const sectorTrends = ref<SectorTrend[]>([])
+const trendLoading = ref(false)
+const trendFilter = ref<'升温' | '退潮' | '全部'>('升温')
 const backtest = ref<LimitUpBacktest | null>(null)
 const backtestLoading = ref(false)
 const backtestMode = ref<'executable' | 'all'>('executable')
@@ -89,6 +101,28 @@ async function rebuild() {
 }
 
 const fmtYi = (value: number) => (value / 1e8).toFixed(1) + '亿'
+
+const visibleTrends = computed(() =>
+  trendFilter.value === '全部'
+    ? sectorTrends.value
+    : sectorTrends.value.filter((item) => item.trend === trendFilter.value),
+)
+
+async function loadTrends() {
+  trendLoading.value = true
+  try {
+    const res = await fetchSectorTrends(120)
+    sectorTrends.value = res.trends ?? []
+  } catch {
+    sectorTrends.value = []
+  } finally {
+    trendLoading.value = false
+  }
+}
+
+function trendClass(trend: SectorTrend['trend']) {
+  return trend === '升温' ? 'up' : trend === '退潮' ? 'down' : ''
+}
 const fmtPct = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
 
 const backtestRows = computed<{ board: BoardStat[]; phase: BoardStat[]; overall: BoardStat } | null>(() => {
@@ -175,6 +209,9 @@ onMounted(() => {
         <button :class="{ active: activeTab === 'broken' }" @click="activeTab = 'broken'">
           炸板 {{ board.broken.length }} / 跌停 {{ board.limitDown.length }}
         </button>
+        <button :class="{ active: activeTab === 'trend' }" @click="activeTab = 'trend'; if (!sectorTrends.length) void loadTrends()">
+          板块趋势
+        </button>
         <button :class="{ active: activeTab === 'backtest' }" @click="activeTab = 'backtest'">历史回测</button>
       </div>
 
@@ -230,8 +267,8 @@ onMounted(() => {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="sector in sectors" :key="sector.key">
-              <td>{{ sector.name }}</td>
+            <tr v-for="sector in sectors" :key="sector.key" class="sector-row" @click="sectorDetail = { name: sector.name, type: sector.type }">
+              <td class="sector-name-cell">{{ sector.name }}</td>
               <td class="num"><b :class="sector.heat >= 60 ? 'up' : ''">{{ sector.heat }}</b></td>
               <td class="num"><b class="up">{{ sector.limitUpCount }}</b></td>
               <td class="num">{{ sector.maxBoard }}</td>
@@ -243,6 +280,53 @@ onMounted(() => {
               <td class="num" :class="sector.avgChangePct >= 0 ? 'up' : 'down'">{{ sector.avgChangePct }}%</td>
             </tr>
             <tr v-if="!sectors.length"><td colspan="10" class="lu-empty-cell">暂无板块梯队</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section v-else-if="activeTab === 'trend'" class="lu-body">
+        <div class="lu-bt-head">
+          <div class="lu-subtabs">
+            <button :class="{ active: trendFilter === '升温' }" @click="trendFilter = '升温'">升温榜</button>
+            <button :class="{ active: trendFilter === '退潮' }" @click="trendFilter = '退潮'">退潮榜</button>
+            <button :class="{ active: trendFilter === '全部' }" @click="trendFilter = '全部'">全部</button>
+          </div>
+          <button class="btn" :disabled="trendLoading" @click="loadTrends">{{ trendLoading ? '加载中…' : '刷新趋势' }}</button>
+        </div>
+        <p class="lu-bt-meta">
+          近 20 个交易日涨停家数序列（3 日均 vs 前 3 日均）；点击任意板块查看补涨池、涨停梯队与趋势详情。
+        </p>
+        <table class="lu-table">
+          <thead>
+            <tr>
+              <th>板块</th><th>类型</th><th class="num">今日</th><th class="num">昨日</th>
+              <th class="num">近3日均</th><th class="num">前3日均</th><th class="num">变化</th>
+              <th class="num">连续在榜</th><th class="num">活跃度</th><th>近 20 日走势</th><th>趋势</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in visibleTrends.slice(0, 40)" :key="item.type + item.name" class="sector-row" @click="sectorDetail = { name: item.name, type: item.type }">
+              <td class="sector-name-cell">{{ item.name }}</td>
+              <td>{{ item.type === 'concept' ? '概念' : '行业' }}</td>
+              <td class="num"><b class="up">{{ item.today }}</b></td>
+              <td class="num">{{ item.yesterday }}</td>
+              <td class="num">{{ item.avgRecent }}</td>
+              <td class="num">{{ item.avgPrevious }}</td>
+              <td class="num" :class="item.deltaPct >= 0 ? 'up' : 'down'">{{ item.deltaPct >= 0 ? '+' : '' }}{{ item.deltaPct }}%</td>
+              <td class="num">{{ item.streak }} 日</td>
+              <td class="num">{{ item.activeRatio }}%</td>
+              <td class="trend-spark">
+                <span
+                  v-for="(value, index) in item.series"
+                  :key="index"
+                  class="spark-bar"
+                  :style="{ height: Math.max(2, Math.min(16, (value || 0) * 2)) + 'px' }"
+                  :title="value + ' 家'"
+                ></span>
+              </td>
+              <td :class="trendClass(item.trend)">{{ item.trend }}</td>
+            </tr>
+            <tr v-if="!visibleTrends.length"><td colspan="11" class="lu-empty-cell">暂无板块趋势数据（先在「历史回测」里重算一次）</td></tr>
           </tbody>
         </table>
       </section>
@@ -355,6 +439,16 @@ onMounted(() => {
         </div>
       </section>
 
+      <Transition name="drawer">
+        <SectorDetailDrawer
+          v-if="sectorDetail"
+          :sector="sectorDetail.name"
+          :type="sectorDetail.type"
+          :board="board"
+          @close="sectorDetail = null"
+        />
+      </Transition>
+
       <section v-if="history.length" class="lu-history">
         <h4>近 {{
           history.length }} 个交易日情绪</h4>
@@ -369,7 +463,7 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.lu-page { height: 100%; min-height: 0; overflow-y: auto; background: var(--bg); }
+.lu-page { position: relative; height: 100%; min-height: 0; overflow-y: auto; background: var(--bg); }
 .lu-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 8px 16px 6px; }
 .lu-head h2 { margin: 0; font-size: 15px; }
 .lu-head p { margin: 0; font-size: 12px; color: var(--text-3); max-width: 640px; line-height: 1.6; }
@@ -398,6 +492,11 @@ onMounted(() => {
 .lu-tabs button { padding: 5px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--panel); font-size: 12px; cursor: pointer; }
 .lu-tabs button.active { background: var(--primary); border-color: var(--primary); color: #fff; }
 .sector-ladder { font-size: 11px; color: var(--text-2); white-space: nowrap; }
+.sector-row { cursor: pointer; }
+.sector-row:hover { background: rgba(30,111,255,.05); }
+.sector-name-cell { font-weight: 600; }
+.trend-spark { display: flex; align-items: flex-end; gap: 1px; height: 18px; }
+.spark-bar { width: 3px; background: rgba(30,111,255,.4); border-radius: 1px 1px 0 0; }
 .lu-subtabs { display: flex; gap: 8px; margin-bottom: 8px; }
 .lu-subtabs button { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); font-size: 11px; cursor: pointer; }
 .lu-subtabs button.active { border-color: var(--primary); color: var(--primary); }
