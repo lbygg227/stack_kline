@@ -105,6 +105,12 @@ import { buildRecommendationAttribution } from './recommendation-attribution.ts'
 import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import {
+  backtestLimitUpPools,
+  loadLimitUpBacktest,
+  rebuildDailyPools,
+  saveLimitUpBacktest,
+} from './limit-up-history.ts'
+import {
   buildDailyDigest,
   DailyDigestScheduler,
   digestPushChannel,
@@ -504,6 +510,37 @@ export function marketDataPlugin(): Plugin {
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
+          return
+        }
+
+        // ---- 涨停池历史回测 ----
+        if (path === '/api/limit-up/backtest') {
+          if (req.method === 'GET') {
+            const cached = loadLimitUpBacktest()
+            sendJson(res, 200, cached
+              ? { ...cached, cached: true }
+              : { cached: false, error: '尚未生成，POST 该接口开始重算（约 30 秒）' })
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const stocks = service.stocksWithIndustry()
+              const nameMap = new Map(stocks.map((stock) => [stock.code, stock.name]))
+              const started = Date.now()
+              const { pools, universe } = await rebuildDailyPools({ nameOf: (code) => nameMap.get(code) })
+              const result = backtestLimitUpPools(pools, { universe })
+              saveLimitUpBacktest(result)
+              console.log(
+                '[limit-up] 历史重算完成：' + result.startDate + ' ~ ' + result.endDate +
+                '（' + result.tradingDays + ' 个交易日）用时 ' + ((Date.now() - started) / 1000).toFixed(1) + 's',
+              )
+              sendJson(res, 200, { ...result, cached: false })
+            } catch (e) {
+              sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
           return
         }
 

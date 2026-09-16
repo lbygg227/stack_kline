@@ -161,6 +161,9 @@ export function detectVetoes(input: GuardInput): string[] {
   const phase = input.board?.phase
   if (height >= 4 && (phase === '退潮' || phase === '冰点')) {
     vetoes.push('情绪' + phase + '期且已是 ' + height + ' 连板，高位接力风险过大')
+  } else if (height >= 5) {
+    // 历史回测（可成交口径）显示 5 板以上剔除一字板后没有超额收益
+    vetoes.push('已 ' + height + ' 连板，剔除一字板后的历史可成交样本无超额收益')
   }
   return vetoes
 }

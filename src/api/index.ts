@@ -26,6 +26,7 @@ import type {
   DragonTigerCacheEntry,
   DragonTigerRankStatus,
   DragonTigerRecoResponse,
+  LimitUpBacktest,
   LimitUpBoard,
   LimitUpSentiment,
   OpinionBackfillState,
@@ -835,6 +836,21 @@ export async function fetchLimitUpBoard(force = false, intraday = true): Promise
     throw new Error(err?.error ?? `limit-up http ${res.status}`)
   }
   return (await res.json()) as { board: LimitUpBoard; cachedAt: number; history: Array<{ date: string; sentiment: LimitUpSentiment }> }
+}
+
+export async function fetchLimitUpBacktest(): Promise<LimitUpBacktest> {
+  const res = await fetch('/api/limit-up/backtest')
+  if (!res.ok) throw new Error(`limit-up backtest http ${res.status}`)
+  return (await res.json()) as LimitUpBacktest
+}
+
+export async function rebuildLimitUpBacktest(): Promise<LimitUpBacktest> {
+  const res = await fetch('/api/limit-up/backtest', { method: 'POST' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? `limit-up backtest http ${res.status}`)
+  }
+  return (await res.json()) as LimitUpBacktest
 }
 
 export async function fetchOpinionBackfill(): Promise<OpinionBackfillState> {

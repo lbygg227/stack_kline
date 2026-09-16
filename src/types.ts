@@ -1486,6 +1486,49 @@ export interface LimitUpBoard {
   sentiment: LimitUpSentiment
 }
 
+export interface BoardStat {
+  bucket: string
+  samples: number
+  winRate: number
+  averageNextPremium: number
+  medianNextPremium: number
+  p10: number
+  p90: number
+  averageNextChange: number
+  nextChangeWinRate: number
+  averageHold3: number
+  averageHold3FromClose: number
+}
+
+export interface LimitUpPhasePoint {
+  date: string
+  phase: SentimentPhase
+  score: number
+  limitUpCount: number
+  limitDownCount: number
+  brokenCount: number
+  brokenRate: number
+  maxBoard: number
+  yesterdayPremium: number
+  promotionRate: number
+  nextPremium: number
+}
+
+export interface LimitUpBacktest {
+  generatedAt: number
+  startDate: string
+  endDate: string
+  tradingDays: number
+  universe: number
+  overall: BoardStat
+  byBoard: BoardStat[]
+  byPhase: BoardStat[]
+  executable: { overall: BoardStat; byBoard: BoardStat[]; byPhase: BoardStat[]; excluded: number }
+  phaseSeries: LimitUpPhasePoint[]
+  notes: string[]
+  cached: boolean
+}
+
 export interface OpinionBackfillProgress {
   subscriptionId: string
   nickname: string

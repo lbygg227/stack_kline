@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchLimitUpBoard } from '../api'
-import type { LimitUpBoard, LimitUpItem, SentimentPhase } from '../types'
+import { fetchLimitUpBacktest, fetchLimitUpBoard, rebuildLimitUpBacktest } from '../api'
+import type { BoardStat, LimitUpBacktest, LimitUpBoard, LimitUpItem, SentimentPhase } from '../types'
 import MarketBadge from './MarketBadge.vue'
 import { useResearch } from '../composables/useResearch'
 
@@ -11,7 +11,10 @@ const board = ref<LimitUpBoard | null>(null)
 const history = ref<Array<{ date: string; sentiment: LimitUpBoard['sentiment'] }>>([])
 const loading = ref(false)
 const error = ref('')
-const activeTab = ref<'ladder' | 'sector' | 'broken'>('ladder')
+const activeTab = ref<'ladder' | 'sector' | 'broken' | 'backtest'>('ladder')
+const backtest = ref<LimitUpBacktest | null>(null)
+const backtestLoading = ref(false)
+const backtestMode = ref<'executable' | 'all'>('executable')
 const sectorType = ref<'concept' | 'industry'>('concept')
 
 const PHASE_CLASS: Record<SentimentPhase, string> = {
@@ -72,8 +75,42 @@ async function rebuild() {
 }
 
 const fmtYi = (value: number) => (value / 1e8).toFixed(1) + '亿'
+const fmtPct = (value: number) => (value > 0 ? '+' : '') + value.toFixed(2) + '%'
 
-onMounted(() => void load())
+const backtestRows = computed<{ board: BoardStat[]; phase: BoardStat[]; overall: BoardStat } | null>(() => {
+  if (!backtest.value) return null
+  return backtestMode.value === 'executable'
+    ? { board: backtest.value.executable.byBoard, phase: backtest.value.executable.byPhase, overall: backtest.value.executable.overall }
+    : { board: backtest.value.byBoard, phase: backtest.value.byPhase, overall: backtest.value.overall }
+})
+
+async function loadBacktest() {
+  backtestLoading.value = true
+  try {
+    backtest.value = await fetchLimitUpBacktest()
+  } catch {
+    backtest.value = null
+  } finally {
+    backtestLoading.value = false
+  }
+}
+
+async function rebuildBacktest() {
+  backtestLoading.value = true
+  error.value = ''
+  try {
+    backtest.value = await rebuildLimitUpBacktest()
+  } catch (e) {
+    error.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    backtestLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void load()
+  void loadBacktest()
+})
 </script>
 
 <template>
@@ -124,6 +161,7 @@ onMounted(() => void load())
         <button :class="{ active: activeTab === 'broken' }" @click="activeTab = 'broken'">
           炸板 {{ board.broken.length }} / 跌停 {{ board.limitDown.length }}
         </button>
+        <button :class="{ active: activeTab === 'backtest' }" @click="activeTab = 'backtest'">历史回测</button>
       </div>
 
       <section v-if="activeTab === 'ladder'" class="lu-body">
@@ -182,6 +220,79 @@ onMounted(() => void load())
             <tr v-if="!sectors.length"><td colspan="6" class="lu-empty-cell">暂无板块梯队</td></tr>
           </tbody>
         </table>
+      </section>
+
+      <section v-else-if="activeTab === 'backtest'" class="lu-body">
+        <div class="lu-bt-head">
+          <div class="lu-subtabs">
+            <button :class="{ active: backtestMode === 'executable' }" @click="backtestMode = 'executable'">可成交口径</button>
+            <button :class="{ active: backtestMode === 'all' }" @click="backtestMode = 'all'">全样本口径</button>
+          </div>
+          <button class="btn" :disabled="backtestLoading" @click="rebuildBacktest">
+            {{ backtestLoading ? '重算中（约 30 秒）…' : '用本地日K重算' }}
+          </button>
+        </div>
+        <div v-if="backtestLoading && !backtest" class="lu-empty">正在遍历本地日K缓存重算历史涨停池…</div>
+        <div v-else-if="!backtest" class="lu-empty">还没有历史回测结果，点击「用本地日K重算」。</div>
+        <template v-else>
+          <p class="lu-bt-meta">
+            区间 {{ backtest.startDate }} ~ {{ backtest.endDate }} · {{ backtest.tradingDays }} 个交易日 · 覆盖 {{ backtest.universe }} 只
+            <span v-if="backtestMode === 'executable'">· 已剔除 {{ backtest.executable.excluded }} 个一字板样本（买不到）</span>
+            <span v-else>· 含一字板（实际买不到，仅作对照）</span>
+          </p>
+          <div v-if="backtestRows" class="lu-bt-tables">
+            <div>
+              <h4>全部涨停股</h4>
+              <table class="lu-table">
+                <thead><tr><th>分组</th><th class="num">样本</th><th class="num">打板胜率</th><th class="num">打板均收益</th><th class="num">打板持有3日</th><th class="num">次日接力</th></tr></thead>
+                <tbody>
+                  <tr>
+                    <td>{{ backtestRows.overall.bucket }}</td>
+                    <td class="num">{{ backtestRows.overall.samples }}</td>
+                    <td class="num">{{ backtestRows.overall.nextChangeWinRate }}%</td>
+                    <td class="num" :class="backtestRows.overall.averageNextChange >= 0 ? 'up' : 'down'">{{ fmtPct(backtestRows.overall.averageNextChange) }}</td>
+                    <td class="num" :class="backtestRows.overall.averageHold3FromClose >= 0 ? 'up' : 'down'">{{ fmtPct(backtestRows.overall.averageHold3FromClose) }}</td>
+                    <td class="num" :class="backtestRows.overall.averageNextPremium >= 0 ? 'up' : 'down'">{{ fmtPct(backtestRows.overall.averageNextPremium) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <h4>按板位</h4>
+              <table class="lu-table">
+                <thead><tr><th>板位</th><th class="num">样本</th><th class="num">打板胜率</th><th class="num">打板均收益</th><th class="num">持有3日</th><th class="num">次日接力</th></tr></thead>
+                <tbody>
+                  <tr v-for="row in backtestRows.board" :key="row.bucket">
+                    <td>{{ row.bucket }}</td>
+                    <td class="num">{{ row.samples }}</td>
+                    <td class="num">{{ row.nextChangeWinRate }}%</td>
+                    <td class="num" :class="row.averageNextChange >= 0 ? 'up' : 'down'">{{ fmtPct(row.averageNextChange) }}</td>
+                    <td class="num" :class="row.averageHold3FromClose >= 0 ? 'up' : 'down'">{{ fmtPct(row.averageHold3FromClose) }}</td>
+                    <td class="num" :class="row.averageNextPremium >= 0 ? 'up' : 'down'">{{ fmtPct(row.averageNextPremium) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div>
+              <h4>按情绪相位</h4>
+              <table class="lu-table">
+                <thead><tr><th>相位</th><th class="num">样本</th><th class="num">打板胜率</th><th class="num">打板均收益</th><th class="num">持有3日</th><th class="num">次日接力</th></tr></thead>
+                <tbody>
+                  <tr v-for="row in backtestRows.phase" :key="row.bucket">
+                    <td>{{ row.bucket }}</td>
+                    <td class="num">{{ row.samples }}</td>
+                    <td class="num">{{ row.nextChangeWinRate }}%</td>
+                    <td class="num" :class="row.averageNextChange >= 0 ? 'up' : 'down'">{{ fmtPct(row.averageNextChange) }}</td>
+                    <td class="num" :class="row.averageHold3FromClose >= 0 ? 'up' : 'down'">{{ fmtPct(row.averageHold3FromClose) }}</td>
+                    <td class="num" :class="row.averageNextPremium >= 0 ? 'up' : 'down'">{{ fmtPct(row.averageNextPremium) }}</td>
+                  </tr>
+                </tbody>
+              </table>
+              <h4>说明</h4>
+              <ul class="lu-notes">
+                <li v-for="(note, i) in backtest.notes" :key="i">{{ note }}</li>
+              </ul>
+            </div>
+          </div>
+        </template>
       </section>
 
       <section v-else class="lu-body">
@@ -286,6 +397,13 @@ onMounted(() => void load())
 .lu-table th, .lu-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
 .lu-table .num { text-align: right; }
 .lu-table th { color: var(--text-3); font-weight: 600; }
+.lu-bt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.lu-bt-meta { margin: 0 0 10px; font-size: 12px; color: var(--text-3); }
+.lu-bt-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+.lu-bt-tables h4 { margin: 12px 0 4px; font-size: 13px; }
+.lu-bt-tables h4:first-child { margin-top: 0; }
+.lu-notes { margin: 0; padding-left: 18px; }
+.lu-notes li { font-size: 11px; line-height: 1.7; color: var(--text-3); }
 .lu-split { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .lu-split h4 { margin: 0 0 6px; font-size: 13px; }
 .lu-history { padding: 0 20px 24px; }
@@ -300,6 +418,6 @@ onMounted(() => void load())
   .lu-head { flex-direction: column; padding: 12px 14px 8px; }
   .lu-sentiment { margin: 6px 14px 0; }
   .lu-tabs, .lu-body, .lu-history { padding-left: 14px; padding-right: 14px; }
-  .lu-split { grid-template-columns: 1fr; }
+  .lu-split, .lu-bt-tables { grid-template-columns: 1fr; }
 }
 </style>
