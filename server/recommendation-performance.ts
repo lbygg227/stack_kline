@@ -4,6 +4,7 @@
  */
 
 import type { KLineBar } from './tencent.ts'
+import { sessionDateOf } from './trading-day.ts'
 import { readJson } from './store.ts'
 
 const RECORD_FILE = 'recommendation-records.json'
@@ -117,7 +118,7 @@ const CHANNEL_LABEL: Record<string, string> = {
 }
 
 const msOf = (timestamp: number): number => timestamp < 1e12 ? timestamp * 1000 : timestamp
-const dayOf = (timestamp: number): string => new Date(msOf(timestamp)).toISOString().slice(0, 10)
+const dayOf = (timestamp: number): string => sessionDateOf(msOf(timestamp))
 
 type Bucket = { count: number; winRate: number; averageReturnPct: number; averageExcessPct: number }
 

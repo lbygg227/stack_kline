@@ -12,6 +12,7 @@
 import type { SnapshotStock } from './eastmoney.ts'
 import type { KLineBar } from './tencent.ts'
 import { readJson, writeJson } from './store.ts'
+import { signalDateOf } from './trading-day.ts'
 
 const HISTORY_FILE = 'limit-up-history.json'
 const SNAPSHOT_FILE = 'limit-up-latest.json'
@@ -125,7 +126,7 @@ interface HistoryFile {
   days: HistoryDay[]
 }
 
-const dayOf = (timestamp: number): string => new Date(timestamp).toISOString().slice(0, 10)
+const dayOf = (timestamp: number): string => signalDateOf(timestamp)
 
 /** 连板高度：从最后一根 K 线往前数连续涨停天数 */
 export function countBoards(bars: KLineBar[], code: string, name = '', limit = bars.length): number {
@@ -389,59 +390,14 @@ export function computeSentiment(input: SentimentInput): Sentiment {
     yesterdayPremium = changes.length ? changes.reduce((sum, v) => sum + v, 0) / changes.length : 0
   }
 
-  const reasons: string[] = []
-  let score = 50
-  // 赚钱效应：昨日涨停今日溢价
-  if (previous.length) {
-    if (yesterdayPremium >= 3) {
-      score += 18
-      reasons.push('昨日涨停股今日平均 +' + yesterdayPremium.toFixed(1) + '%，打板赚钱效应强')
-    } else if (yesterdayPremium >= 0) {
-      score += 8
-      reasons.push('昨日涨停股今日平均 ' + yesterdayPremium.toFixed(1) + '%，赚钱效应一般')
-    } else {
-      score -= 18
-      reasons.push('昨日涨停股今日平均 ' + yesterdayPremium.toFixed(1) + '%，亏钱效应')
-    }
-  }
-  if (board.limitUp.length >= 100) {
-    score += 16
-    reasons.push('涨停 ' + board.limitUp.length + ' 家，市场情绪高涨')
-  } else if (board.limitUp.length >= 60) {
-    score += 10
-    reasons.push('涨停 ' + board.limitUp.length + ' 家，情绪偏强')
-  } else if (board.limitUp.length < 30) {
-    score -= 14
-    reasons.push('涨停仅 ' + board.limitUp.length + ' 家，情绪低迷')
-  }
-  if (brokenRate >= 45) {
-    score -= 15
-    reasons.push('炸板率 ' + brokenRate.toFixed(0) + '%，分歧加剧')
-  } else if (brokenRate > 0 && brokenRate <= 20) {
-    score += 8
-    reasons.push('炸板率仅 ' + brokenRate.toFixed(0) + '%，封板质量高')
-  }
-  if (maxBoard >= 5) {
-    score += 10
-    reasons.push('最高 ' + maxBoard + ' 连板，空间打开')
-  } else if (maxBoard <= 2) {
-    score -= 8
-    reasons.push('最高仅 ' + maxBoard + ' 板，缺乏空间')
-  }
-  if (board.limitDown.length >= 30) {
-    score -= 20
-    reasons.push('跌停 ' + board.limitDown.length + ' 家，下杀明显')
-  }
-  score = Math.max(0, Math.min(100, Math.round(score)))
-
-  let phase: SentimentPhase
-  if (previous.length && (yesterdayPremium <= -2 || board.limitDown.length >= 40)) phase = '退潮'
-  else if (brokenRate >= 45 && board.limitUp.length >= 40) phase = '退潮'
-  else if (score < 35) phase = '冰点'
-  else if (score >= 78 && (board.limitUp.length >= 90 || maxBoard >= 5)) phase = '高潮'
-  else if (score >= 62) phase = '发酵'
-  else phase = '启动'
-
+  const classified = classifyPhase({
+    limitUpCount: board.limitUp.length,
+    limitDownCount: board.limitDown.length,
+    brokenCount: board.broken.length,
+    maxBoard,
+    yesterdayPremium,
+    hasPrevious: previous.length > 0,
+  })
   return {
     limitUpCount: board.limitUp.length,
     limitDownCount: board.limitDown.length,
@@ -450,19 +406,98 @@ export function computeSentiment(input: SentimentInput): Sentiment {
     maxBoard,
     promotionRate: Number(promotionRate.toFixed(1)),
     yesterdayPremium: Number(yesterdayPremium.toFixed(2)),
-    phase,
-    score,
-    reasons,
+    phase: classified.phase,
+    score: classified.score,
+    reasons: classified.reasons,
   }
 }
 
-/** 情绪相位 -> 各风格推荐权重系数 */
+export interface PhaseInput {
+  limitUpCount: number
+  limitDownCount: number
+  brokenCount: number
+  maxBoard: number
+  yesterdayPremium: number
+  hasPrevious: boolean
+}
+
+/** 情绪相位判定：实时看板与历史回算共用同一套阈值，保证口径一致 */
+export function classifyPhase(input: PhaseInput): {
+  phase: SentimentPhase
+  score: number
+  reasons: string[]
+} {
+  const total = input.limitUpCount + input.brokenCount
+  const brokenRate = total ? input.brokenCount / total * 100 : 0
+  const reasons: string[] = []
+  let score = 50
+  if (input.hasPrevious) {
+    if (input.yesterdayPremium >= 3) {
+      score += 18
+      reasons.push('昨日涨停股今日平均 +' + input.yesterdayPremium.toFixed(1) + '%，打板赚钱效应强')
+    } else if (input.yesterdayPremium >= 0) {
+      score += 8
+      reasons.push('昨日涨停股今日平均 ' + input.yesterdayPremium.toFixed(1) + '%，赚钱效应一般')
+    } else {
+      score -= 18
+      reasons.push('昨日涨停股今日平均 ' + input.yesterdayPremium.toFixed(1) + '%，亏钱效应')
+    }
+  }
+  if (input.limitUpCount >= 100) {
+    score += 16
+    reasons.push('涨停 ' + input.limitUpCount + ' 家，市场情绪高涨')
+  } else if (input.limitUpCount >= 60) {
+    score += 10
+    reasons.push('涨停 ' + input.limitUpCount + ' 家，情绪偏强')
+  } else if (input.limitUpCount < 30) {
+    score -= 14
+    reasons.push('涨停仅 ' + input.limitUpCount + ' 家，情绪低迷')
+  }
+  if (brokenRate >= 45) {
+    score -= 15
+    reasons.push('炸板率 ' + brokenRate.toFixed(0) + '%，分歧加剧')
+  } else if (brokenRate > 0 && brokenRate <= 20) {
+    score += 8
+    reasons.push('炸板率仅 ' + brokenRate.toFixed(0) + '%，封板质量高')
+  }
+  if (input.maxBoard >= 5) {
+    score += 10
+    reasons.push('最高 ' + input.maxBoard + ' 连板，空间打开')
+  } else if (input.maxBoard <= 2) {
+    score -= 8
+    reasons.push('最高仅 ' + input.maxBoard + ' 板，缺乏空间')
+  }
+  if (input.limitDownCount >= 30) {
+    score -= 20
+    reasons.push('跌停 ' + input.limitDownCount + ' 家，下杀明显')
+  }
+  score = Math.max(0, Math.min(100, Math.round(score)))
+
+  let phase: SentimentPhase
+  if (input.hasPrevious && (input.yesterdayPremium <= -2 || input.limitDownCount >= 40)) phase = '退潮'
+  else if (brokenRate >= 45 && input.limitUpCount >= 40) phase = '退潮'
+  else if (score < 35) phase = '冰点'
+  else if (score >= 78 && (input.limitUpCount >= 90 || input.maxBoard >= 5)) phase = '高潮'
+  else if (score >= 62) phase = '发酵'
+  else phase = '启动'
+  return { phase, score, reasons }
+}
+
+/**
+ * 情绪相位 -> 各风格推荐权重系数。
+ *
+ * 依据历史回测（2012-12 ~ 2026-09，可成交口径 = 剔除一字板）：
+ *   打板（涨停日收盘买、次日收盘卖）：冰点 +1.32% / 启动 +0.89% / 发酵 +1.14% / 高潮 +1.83% / 退潮 +0.52%，退潮 3 日转负 -0.28%
+ *   次日接力（次日开盘买）：所有相位均为负期望，越高的板越差
+ *   剔除一字板后「板位越高越好」的效应消失 → 高位板不再给额外加权
+ * 因此：退潮压低打板与龙头、冰点相对抬升低位首板、补涨整体降权（接力为负期望）。
+ */
 export const PHASE_STYLE_MULTIPLIER: Record<SentimentPhase, Record<string, number>> = {
-  冰点: { limit_up: 0.85, leader: 0.7, relay: 0.9, pullback: 1.15, trend: 1.0, event: 1.0, fund: 1.05, opinion: 1.0 },
-  启动: { limit_up: 1.15, leader: 1.0, relay: 1.2, pullback: 1.05, trend: 1.05, event: 1.0, fund: 1.05, opinion: 1.0 },
-  发酵: { limit_up: 1.1, leader: 1.2, relay: 1.1, pullback: 1.0, trend: 1.05, event: 1.0, fund: 1.0, opinion: 1.0 },
-  高潮: { limit_up: 1.0, leader: 1.15, relay: 0.85, pullback: 0.9, trend: 1.0, event: 1.0, fund: 1.0, opinion: 1.0 },
-  退潮: { limit_up: 0.7, leader: 0.6, relay: 0.75, pullback: 1.2, trend: 1.05, event: 1.05, fund: 1.05, opinion: 1.05 },
+  冰点: { limit_up: 1.1, leader: 0.75, relay: 0.85, pullback: 1.15, trend: 1.0, event: 1.0, fund: 1.05, opinion: 1.0 },
+  启动: { limit_up: 1.05, leader: 0.95, relay: 0.9, pullback: 1.05, trend: 1.05, event: 1.0, fund: 1.05, opinion: 1.0 },
+  发酵: { limit_up: 1.05, leader: 1.0, relay: 0.9, pullback: 1.0, trend: 1.05, event: 1.0, fund: 1.0, opinion: 1.0 },
+  高潮: { limit_up: 0.95, leader: 0.9, relay: 0.8, pullback: 0.95, trend: 1.05, event: 1.0, fund: 1.0, opinion: 1.0 },
+  退潮: { limit_up: 0.7, leader: 0.6, relay: 0.7, pullback: 1.2, trend: 1.05, event: 1.05, fund: 1.05, opinion: 1.05 },
 }
 
 /** 保存完整看板快照：服务重启后推荐接口可直接复用，无需重算 15s */

@@ -3,6 +3,7 @@
  */
 
 import type { KLineBar } from './tencent.ts'
+import { sessionDateOf } from './trading-day.ts'
 import { readJson, writeJson } from './store.ts'
 
 const STORE_FILE = 'simulation.json'
@@ -101,7 +102,7 @@ function loadRecords(): RecommendationRecord[] {
 }
 
 const msOf = (timestamp: number): number => timestamp < 1e12 ? timestamp * 1000 : timestamp
-const dayOf = (timestamp: number): string => new Date(msOf(timestamp)).toISOString().slice(0, 10)
+const dayOf = (timestamp: number): string => sessionDateOf(msOf(timestamp))
 
 function indexOfSignal(bars: KLineBar[], signalDate: string): number {
   return bars.findIndex((bar) => dayOf(bar.timestamp) >= signalDate)

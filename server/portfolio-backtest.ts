@@ -1,4 +1,5 @@
 import type { SnapshotStock } from './eastmoney.ts'
+import { sessionDateOf } from './trading-day.ts'
 import {
   SCREENING_STRATEGIES,
   evaluateStrategies,
@@ -83,7 +84,7 @@ interface Position {
 }
 
 const msOf = (timestamp: number): number => timestamp < 1e12 ? timestamp * 1000 : timestamp
-const dayOf = (timestamp: number): string => new Date(msOf(timestamp)).toISOString().slice(0, 10)
+const dayOf = (timestamp: number): string => sessionDateOf(msOf(timestamp))
 const round = (value: number, digits = 4): number => {
   const scale = 10 ** digits
   return Math.round(value * scale) / scale

@@ -1,5 +1,6 @@
 import type { KLineBar } from './tencent.ts'
 import type { OpinionDocument, OpinionPlatform, OpinionStance } from './opinions.ts'
+import { sessionDateOf } from './trading-day.ts'
 
 export type OpinionDocumentKind = 'answer' | 'article' | 'pin' | 'manual'
 
@@ -76,7 +77,7 @@ export interface OpinionBacktestResult {
 
 const DAY = 86_400_000
 const msOf = (timestamp: number): number => timestamp < 1e12 ? timestamp * 1000 : timestamp
-const dayOf = (timestamp: number): string => new Date(msOf(timestamp)).toISOString().slice(0, 10)
+const dayOf = (timestamp: number): string => sessionDateOf(msOf(timestamp))
 const round = (value: number, digits = 4): number => {
   const scale = 10 ** digits
   return Math.round(value * scale) / scale
