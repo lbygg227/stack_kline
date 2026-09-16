@@ -143,9 +143,9 @@ onMounted(() => void load())
 
 <style scoped>
 .sim-page { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
-.sim-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 18px 10px; }
-.sim-head h2 { margin: 0 0 4px; font-size: 18px; }
-.sim-head p { margin: 0; font-size: 12px; color: var(--text-3); }
+.sim-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px 6px; }
+.sim-head h2 { margin: 0; font-size: 15px; }
+.sim-head p { margin: 2px 0 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .sim-actions { display: flex; gap: 8px; }
 .sim-actions .primary { background: var(--primary); border-color: var(--primary); color: #fff; }
 .sim-state { padding: 60px 20px; text-align: center; color: var(--text-3); }

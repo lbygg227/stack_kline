@@ -343,8 +343,8 @@ onMounted(() => void load())
 
 <style scoped>
 .digest-page { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--bg); overflow-y: auto; }
-.dg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 16px 20px 10px; }
-.dg-head h2 { margin: 0 0 4px; font-size: 18px; }
+.dg-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 8px 16px 6px; }
+.dg-head h2 { margin: 0; font-size: 15px; }
 .dg-head p { margin: 0; font-size: 12px; color: var(--text-3); max-width: 620px; line-height: 1.6; }
 .dg-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .dg-actions .primary { background: var(--primary); border-color: var(--primary); color: #fff; }

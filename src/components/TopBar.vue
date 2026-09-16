@@ -4,6 +4,7 @@ import { useMarket, INDEX_LIST } from '../composables/useMarket'
 import { useResearch } from '../composables/useResearch'
 import { fetchTunnelInfo, searchStocks } from '../api'
 import type { StockInfo } from '../types'
+import type { DesktopView } from '../composables/useMarket'
 
 const { selectStock, displayQuote, setView, state, isMobile } = useMarket()
 const {
@@ -76,6 +77,70 @@ function onBlur() {
 onBeforeUnmount(() => window.clearTimeout(timer))
 
 const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
+
+/**
+ * 导航分组：10 个平铺按钮太挤，收敛成「3 个直达 + 3 个分组」。
+ * 每组内含相关页面，当前所在页面会高亮所属分组。
+ */
+interface NavGroup {
+  key: string
+  label: string
+  items: Array<{ view: DesktopView; label: string; hint: string }>
+}
+
+const NAV_GROUPS: NavGroup[] = [
+  {
+    key: 'market',
+    label: '行情',
+    items: [
+      { view: 'market', label: 'K线看盘', hint: '分时与日线、盘口' },
+      { view: 'all-market', label: '全市场', hint: '全部 A 股筛选与排序' },
+    ],
+  },
+  {
+    key: 'research',
+    label: '研究',
+    items: [
+      { view: 'strategy', label: '选股器', hint: '条件选股与候选工作台' },
+      { view: 'opinion', label: '观点研究', hint: '博主观点采集与回测' },
+      { view: 'events', label: '资讯事件', hint: '金十快讯与题材事件' },
+    ],
+  },
+  {
+    key: 'review',
+    label: '复盘',
+    items: [
+      { view: 'backtest', label: '回测研究', hint: '风格回测与荐股归因' },
+      { view: 'simulation', label: '模拟盘', hint: '推荐模拟持仓与资金曲线' },
+      { view: 'digest', label: '每日复盘', hint: '收盘摘要与推送' },
+    ],
+  },
+]
+
+const openMenu = ref('')
+const navRef = ref<HTMLElement | null>(null)
+
+function toggleMenu(key: string) {
+  openMenu.value = openMenu.value === key ? '' : key
+}
+
+function pickView(view: DesktopView) {
+  setView(view)
+  openMenu.value = ''
+}
+
+function groupActive(group: NavGroup): boolean {
+  return group.items.some((item) => item.view === state.view)
+}
+
+function onDocumentClick(event: MouseEvent) {
+  if (!openMenu.value) return
+  const target = event.target as Node | null
+  if (navRef.value && target && !navRef.value.contains(target)) openMenu.value = ''
+}
+
+onMounted(() => document.addEventListener('click', onDocumentClick))
+onBeforeUnmount(() => document.removeEventListener('click', onDocumentClick))
 </script>
 
 <template>
@@ -112,59 +177,36 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
 
     <button
       class="btn nav-btn"
-      :class="{ active: state.view === 'all-market' }"
-      @click="setView(state.view === 'all-market' ? 'market' : 'all-market')"
-    >
-      全市场
-    </button>
-
-    <button
-      class="btn nav-btn"
-      :class="{ active: state.view === 'events' }"
-      @click="setView(state.view === 'events' ? 'market' : 'events')"
-    >
-      资讯事件
-    </button>
-
-    <button
-      class="btn nav-btn"
-      :class="{ active: state.view === 'strategy' }"
-      @click="setView(state.view === 'strategy' ? 'market' : 'strategy')"
-    >
-      选股器
-    </button>
-
-    <button
-      class="btn nav-btn"
-      :class="{ active: state.view === 'backtest' }"
-      @click="setView(state.view === 'backtest' ? 'market' : 'backtest')"
-    >
-      回测研究
-    </button>
-
-    <button
-      class="btn nav-btn"
-      :class="{ active: state.view === 'simulation' }"
-      @click="setView(state.view === 'simulation' ? 'market' : 'simulation')"
-    >
-      模拟盘
-    </button>
-
-    <button
-      class="btn nav-btn"
-      :class="{ active: state.view === 'digest' }"
-      @click="setView(state.view === 'digest' ? 'market' : 'digest')"
-    >
-      每日复盘
-    </button>
-
-    <button
-      class="btn nav-btn"
       :class="{ active: state.view === 'limit-up' }"
       @click="setView(state.view === 'limit-up' ? 'market' : 'limit-up')"
     >
       涨停板
     </button>
+
+    <nav ref="navRef" class="nav-groups">
+      <div v-for="group in NAV_GROUPS" :key="group.key" class="nav-group">
+        <button
+          class="btn nav-btn nav-group-btn"
+          :class="{ active: groupActive(group), open: openMenu === group.key }"
+          @click.stop="toggleMenu(group.key)"
+        >
+          {{ group.label }}
+          <span class="caret">▾</span>
+        </button>
+        <div v-if="openMenu === group.key" class="nav-menu">
+          <button
+            v-for="item in group.items"
+            :key="item.view"
+            class="nav-menu-item"
+            :class="{ active: state.view === item.view }"
+            @click.stop="pickView(item.view)"
+          >
+            <span class="nav-menu-label">{{ item.label }}</span>
+            <span class="nav-menu-hint">{{ item.hint }}</span>
+          </button>
+        </div>
+      </div>
+    </nav>
 
     <div v-if="!isMobile && candidates.length" class="queue-chip">
       <button class="btn" @click="prevCandidate">‹</button>
@@ -174,14 +216,6 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
       </button>
       <button class="btn" @click="nextCandidate">›</button>
     </div>
-
-    <button
-      class="btn nav-btn"
-      :class="{ active: state.view === 'opinion' }"
-      @click="setView(state.view === 'opinion' ? 'market' : 'opinion')"
-    >
-      观点研究
-    </button>
 
     <button
       class="btn nav-btn"
@@ -256,6 +290,40 @@ const pctCls = (v: number) => (v > 0 ? 'up' : v < 0 ? 'down' : 'flat')
   gap: 8px;
   flex-shrink: 0;
 }
+.nav-groups { display: flex; align-items: center; gap: 6px; }
+.nav-group { position: relative; }
+.nav-group-btn { display: inline-flex; align-items: center; gap: 4px; }
+.nav-group-btn .caret { font-size: 9px; opacity: .65; }
+.nav-group-btn.open { border-color: var(--primary); color: var(--primary); }
+.nav-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 10px 28px rgba(15, 23, 42, .14);
+}
+.nav-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+.nav-menu-item:hover { background: var(--panel-2); }
+.nav-menu-item.active { background: rgba(30, 111, 255, .1); }
+.nav-menu-label { font-size: 12px; font-weight: 600; color: var(--text-1); }
+.nav-menu-item.active .nav-menu-label { color: var(--primary); }
+.nav-menu-hint { font-size: 10px; color: var(--text-3); }
 .nav-btn {
   flex-shrink: 0;
   font-weight: 600;

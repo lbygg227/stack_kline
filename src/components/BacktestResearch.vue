@@ -515,9 +515,9 @@ const fmt = (v?: number, digits = 2) => (v == null ? '--' : v.toFixed(digits))
 
 <style scoped>
 .backtest-page { height: 100%; min-height: 0; display: flex; flex-direction: column; background: var(--bg); }
-.bt-head { padding: 16px 20px 12px; }
-.bt-head h2 { margin: 0 0 4px; font-size: 18px; }
-.bt-head p { margin: 0; font-size: 12px; color: var(--text-3); }
+.bt-head { padding: 8px 16px 6px; }
+.bt-head h2 { margin: 0; font-size: 15px; }
+.bt-head p { margin: 2px 0 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .bt-body { flex: 1; overflow-y: auto; padding: 0 20px 20px; }
 .bt-form { display: flex; flex-direction: column; gap: 10px; max-width: 760px; padding: 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); }
 .bt-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-3); }
