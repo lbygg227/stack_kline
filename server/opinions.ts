@@ -41,6 +41,16 @@ export interface OpinionClaim {
   invalidation: string
   confidence: number
   evidenceQuote: string
+  /** 引用是否能在原文中逐字命中（防止抽取幻觉） */
+  quoteVerified?: boolean
+}
+
+/** 逐字引用校验：忽略空白后判断引用是否出现在原文里 */
+export function verifyEvidenceQuote(content: string, quote: string): boolean {
+  const target = content.replace(/\s+/g, '')
+  const needle = quote.replace(/\s+/g, '')
+  if (!needle || needle.length < 4) return false
+  return target.includes(needle)
 }
 
 export interface OpinionDocumentVersion {
@@ -372,12 +382,35 @@ export function applyOpinionAnalysis(
   if (!document) throw new Error('观点文章不存在')
   document.summary = result.summary
   document.claims = result.claims
+  // 落库即做一次逐字引用校验，后续权重与回测都可据此过滤抽取幻觉
+  verifyDocumentQuotes(document)
   document.analysisModel = result.model
   document.analysisError = undefined
   document.status = 'analyzed'
   document.updatedAt = Date.now()
   persist()
   return document
+}
+
+/** 内容类型：想法（pin）/ 长文（回答·文章）/ 手工导入 */
+export type OpinionDocumentKind = 'pin' | 'longform' | 'manual'
+
+export function opinionDocumentKind(document: Pick<OpinionDocument, 'platformPostId'>): OpinionDocumentKind {
+  const id = String(document.platformPostId ?? '')
+  if (id.startsWith('pin:')) return 'pin'
+  if (id.startsWith('answer:') || id.startsWith('article:')) return 'longform'
+  return 'manual'
+}
+
+/**
+ * 各类型内容的权重系数。
+ * 依据 2026-09 回补后的分层回测：想法在 3/5/10/20 日全部负超额（-3.4% @20日），
+ * 长文稳定正超额（+3.8% @20日），手工导入 +5.4%。想法只作情绪参考，因此大幅降权。
+ */
+export const OPINION_KIND_WEIGHT: Record<OpinionDocumentKind, number> = {
+  pin: 0.4,
+  longform: 1,
+  manual: 0.8,
 }
 
 export function markOpinionAnalysisFailed(id: string, error: unknown): OpinionDocument {
@@ -425,6 +458,25 @@ export function resolveOpinionClaims(
       invalidation: raw.invalidation?.trim() ?? '',
       confidence: Math.max(0, Math.min(1, Number(raw.confidence) || 0)),
       evidenceQuote: raw.evidenceQuote?.trim() ?? '',
+      quoteVerified: undefined,
     }
   }).filter((claim) => claim.thesis || claim.evidenceQuote)
+}
+
+/** 对文档的所有 claim 做逐字引用校验，返回可核验比例 */
+/** 手动触发落盘（批量维护后使用） */
+export function persistOpinionStore(): void {
+  persist()
+}
+
+export function verifyDocumentQuotes(document: Pick<OpinionDocument, 'content' | 'claims'>): {
+  verified: number
+  total: number
+} {
+  let verified = 0
+  for (const claim of document.claims) {
+    claim.quoteVerified = verifyEvidenceQuote(document.content, claim.evidenceQuote)
+    if (claim.quoteVerified) verified++
+  }
+  return { verified, total: document.claims.length }
 }

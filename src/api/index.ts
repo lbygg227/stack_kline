@@ -26,6 +26,7 @@ import type {
   DragonTigerCacheEntry,
   DragonTigerRankStatus,
   DragonTigerRecoResponse,
+  AuthorStatsFile,
   LimitUpBacktest,
   LimitUpBoard,
   LimitUpSentiment,
@@ -842,6 +843,12 @@ export async function fetchLimitUpBoard(force = false, intraday = true): Promise
     consensus: Record<string, { score: number; lineCount: number; notes: string[] }>
     history: Array<{ date: string; sentiment: LimitUpSentiment }>
   }
+}
+
+export async function fetchAuthorStats(): Promise<AuthorStatsFile> {
+  const res = await fetch('/api/opinions/author-stats')
+  if (!res.ok) throw new Error(`author stats http ${res.status}`)
+  return (await res.json()) as AuthorStatsFile
 }
 
 export async function fetchLimitUpBacktest(): Promise<LimitUpBacktest> {

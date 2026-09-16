@@ -11,11 +11,13 @@ import {
   fetchOpinionStockReco,
   fetchOpinionSubscriptions,
   fetchOpinionSyncLogs,
+  fetchAuthorStats,
   ingestOpinionDocument,
   saveOpinionSubscription,
   syncOpinionSubscription,
 } from '../api'
 import type {
+  AuthorStatsFile,
   OpinionBackfillState,
   OpinionDocument,
   OpinionPlatform,
@@ -57,6 +59,18 @@ const importing = ref(false)
 const syncingId = ref('')
 const analyzingId = ref('')
 const showResearch = ref(false)
+
+// ---- 博主可靠性 ----
+const authorStats = ref<AuthorStatsFile | null>(null)
+const showAuthors = ref(false)
+
+async function loadAuthorStats() {
+  try {
+    authorStats.value = await fetchAuthorStats()
+  } catch {
+    authorStats.value = null
+  }
+}
 
 // ---- 历史回补 ----
 const backfill = ref<OpinionBackfillState | null>(null)
@@ -120,6 +134,7 @@ async function stopBackfill() {
 
 onMounted(() => {
   void loadBackfill(true)
+  void loadAuthorStats()
 })
 
 onBeforeUnmount(() => {
@@ -348,6 +363,7 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
         <div class="op-subtitle">证据层 · 荐股请到选股页「观点驱动」</div>
       </div>
       <div class="op-head-actions">
+        <button class="btn" @click="showAuthors = !showAuthors">博主可靠性</button>
         <button class="btn" @click="showBackfill = !showBackfill">
           历史回补<span v-if="backfill?.running" class="op-dot"></span>
         </button>
@@ -370,6 +386,38 @@ const stanceLabel = (stance: string) => ({ bullish: '看多', bearish: '看空',
 
     <div v-if="error" class="op-message error">{{ error }}</div>
     <div v-if="notice" class="op-message notice">{{ notice }}</div>
+
+    <section v-if="showAuthors" class="op-card op-backfill">
+      <div class="op-backfill-head">
+        <b>博主可靠性（近 20 日持有期回测）</b>
+        <span class="op-help-inline">
+          <template v-if="authorStats?.updatedAt">
+            更新于 {{ new Date(authorStats.updatedAt).toLocaleString() }} · 基础 {{ authorStats.benchmarkCode }}
+            <template v-if="authorStats.verifiedOnly"> · 仅统计逐字命中的引用</template>
+          </template>
+          <template v-else>尚未计算：在「观点回测」里跑一次，或调用 /api/opinions/author-stats</template>
+        </span>
+      </div>
+      <table v-if="authorStats?.authors?.length" class="op-backfill-table">
+        <thead><tr><th>博主</th><th>样本</th><th>命中率</th><th>可靠性</th><th>平均方向收益</th><th>平均超额</th></tr></thead>
+        <tbody>
+          <tr v-for="author in authorStats.authors" :key="author.authorName">
+            <td>{{ author.authorName }}</td>
+            <td>{{ author.evaluated }}</td>
+            <td>{{ author.hitRate }}%</td>
+            <td><b>{{ author.reliability }}</b></td>
+            <td :class="author.averageDirectionalReturnPct >= 0 ? 'up' : 'down'">{{ author.averageDirectionalReturnPct }}%</td>
+            <td :class="(author.averageDirectionalExcessPct ?? 0) >= 0 ? 'up' : 'down'">
+              {{ author.averageDirectionalExcessPct == null ? '—' : author.averageDirectionalExcessPct + '%' }}
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <p v-else class="op-empty">暂无作者统计。</p>
+      <p class="op-help-inline">
+        可靠性已接入观点通道权重：可靠性越高、且来源为长文（非想法）的观点，在推荐里的权重越大。
+      </p>
+    </section>
 
     <section v-if="showBackfill" class="op-card op-backfill">
       <div class="op-backfill-head">

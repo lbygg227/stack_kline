@@ -202,18 +202,31 @@ export function opinionReasons(item: {
   theses: string[]
   risks?: string[]
   sources?: ReasonSourceLink[]
+  /** 支撑该观点的内容类型：只有想法的信号要大幅降权 */
+  kinds?: Array<'pin' | 'longform' | 'manual'>
 }): RecommendationReason[] {
   if (!item.authors.length && !item.claimCount) return []
+  const onlyPin = item.kinds?.length === 1 && item.kinds[0] === 'pin'
+  const kindLabel = item.kinds?.length
+    ? item.kinds.map((kind) => (kind === 'pin' ? '想法' : kind === 'longform' ? '长文' : '手工导入')).join('/')
+    : ''
   const reasons: RecommendationReason[] = [{
     dimension: 'opinion',
     key: 'blogger_bullish',
-    label: '博主看多',
+    label: onlyPin ? '博主看多（仅想法）' : '博主看多',
     detail:
-      item.authors.length + ' 位博主 · ' + item.claimCount + ' 条观点 · 一致度 ' + Math.round(item.agreement * 100) + '%' +
+      item.authors.length + ' 位博主 · ' + item.claimCount + ' 条观点' + (kindLabel ? '（' + kindLabel + '）' : '') +
+      ' · 一致度 ' + Math.round(item.agreement * 100) + '%' +
       (item.theses[0] ? '：' + (item.theses[0].length > 70 ? item.theses[0].slice(0, 70) + '…' : item.theses[0]) : ''),
-    weight: 0.38,
-    strength: Math.max(30, Math.min(88, 35 + item.confidence * 40 + item.agreement * 20)),
-    metrics: { authors: item.authors.length, claims: item.claimCount, agreement: Math.round(item.agreement * 100) },
+    // 分层回测：想法在 3/5/10/20 日全部负超额，长文稳定正超额 → 仅想法支撑的信号降权
+    weight: onlyPin ? 0.16 : 0.38,
+    strength: Math.max(18, Math.min(88, 35 + item.confidence * 40 + item.agreement * 20 - (onlyPin ? 18 : 0))),
+    metrics: {
+      authors: item.authors.length,
+      claims: item.claimCount,
+      agreement: Math.round(item.agreement * 100),
+      kinds: kindLabel || '未知',
+    },
     expect: '观点成立 → 观点发布后 7 日内股价跟随上涨；若观点看多但价格走弱即为证伪',
     sources: item.sources?.slice(0, 5),
   }]

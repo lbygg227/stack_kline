@@ -1500,6 +1500,24 @@ export interface BoardStat {
   averageHold3FromClose: number
 }
 
+export interface AuthorStat {
+  authorName: string
+  evaluated: number
+  hitRate: number
+  reliability: number
+  averageDirectionalReturnPct: number
+  averageDirectionalExcessPct?: number
+}
+
+export interface AuthorStatsFile {
+  version: number
+  updatedAt: number
+  holdingDays: number
+  benchmarkCode: string
+  verifiedOnly: boolean
+  authors: AuthorStat[]
+}
+
 export interface LimitUpPhasePoint {
   date: string
   phase: SentimentPhase

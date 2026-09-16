@@ -6,6 +6,7 @@
 import type { SnapshotStock } from './eastmoney.ts'
 import { buildEventStockReco } from './event-stock-reco.ts'
 import { buildOpinionStockReco } from './opinion-stock-reco.ts'
+import { authorReliabilityMap } from './opinion-author-stats.ts'
 import { buildFundStockReco } from './fund-stock-reco.ts'
 import { buildDragonTigerReco } from './dragon-tiger-stock-reco.ts'
 import { buildIndustryStats } from './screening-strategies.ts'
@@ -434,7 +435,15 @@ function buildEventRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
 }
 
 function buildOpinionRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
-  return buildOpinionStockReco({ stocks, days: 60, limit: 30, stance: 'bullish' }).items.map((item) =>
+  return buildOpinionStockReco({
+    stocks,
+    days: 60,
+    limit: 30,
+    stance: 'bullish',
+    // 博主可靠性 + 内容类型权重：想法 0.4、长文 1、手工 0.8（依据分层回测）
+    authorReliability: authorReliabilityMap(),
+    verifiedOnly: false,
+  }).items.map((item) =>
     makeRecord({
       id: 'opinion:' + item.code,
       code: item.code,
@@ -447,6 +456,7 @@ function buildOpinionRecords(stocks: SnapshotStock[]): RecommendationRecord[] {
       industry: item.industry,
       reasons: opinionReasons({
         authors: item.authors,
+        kinds: item.kinds,
         claimCount: item.claimCount,
         agreement: item.agreement,
         confidence: item.confidence,

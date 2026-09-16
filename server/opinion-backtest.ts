@@ -13,6 +13,8 @@ export interface OpinionBacktestConfig {
   benchmarkCode: string
   /** 只统计某几类内容：想法(pin) 与长文(answer/article) 可以分开评估 */
   kinds?: OpinionDocumentKind[]
+  /** 只统计「引用能在原文逐字命中」的 claims（剔除抽取幻觉） */
+  verifiedOnly?: boolean
 }
 
 /** 从 platformPostId 推断内容类型 */
@@ -152,6 +154,7 @@ export async function runOpinionBacktest(
     benchmarkCode: /^(sh|sz)\d{6}$/.test(rawConfig.benchmarkCode ?? '')
       ? rawConfig.benchmarkCode!
       : 'sh000300',
+    verifiedOnly: rawConfig.verifiedOnly === true,
     kinds: Array.isArray(rawConfig.kinds) && rawConfig.kinds.length
       ? rawConfig.kinds.filter((kind): kind is OpinionDocumentKind =>
           kind === 'answer' || kind === 'article' || kind === 'pin' || kind === 'manual')
@@ -166,6 +169,7 @@ export async function runOpinionBacktest(
   const claims = selected.flatMap((document) =>
     document.claims
       .filter((claim) => claim.code && claim.stance !== 'neutral')
+      .filter((claim) => !config.verifiedOnly || claim.quoteVerified !== false)
       .map((claim) => ({ document, claim })),
   )
   const cache = new Map<string, Promise<KLineBar[]>>()

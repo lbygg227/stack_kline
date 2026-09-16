@@ -83,13 +83,16 @@ import {
   listOpinionSubscriptions,
   listOpinionSyncLogs,
   markOpinionAnalysisFailed,
+  persistOpinionStore,
   removeOpinionSubscription,
   resolveOpinionClaims,
   saveOpinionSubscription,
+  verifyDocumentQuotes,
   type OpinionPlatform,
 } from './opinions.ts'
 import { OpinionSyncScheduler, syncOpinionSubscription } from './opinion-sync.ts'
 import { cancelBackfill, getBackfillState, isBackfillRunning, startOpinionBackfill } from './opinion-backfill.ts'
+import { loadAuthorStats, refreshAuthorStats } from './opinion-author-stats.ts'
 import { buildOpinionSignals } from './opinion-signals.ts'
 import { runOpinionBacktest } from './opinion-backtest.ts'
 import { buildTodayRecommendations } from './recommendations.ts'
@@ -1673,6 +1676,57 @@ export function marketDataPlugin(): Plugin {
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
+          return
+        }
+
+        // ---- 存量观点补打「逐字引用校验」标记 ----
+        if (path === '/api/opinions/verify-quotes' && req.method === 'POST') {
+          try {
+            const documents = listOpinionDocuments({ limit: 5000 })
+            let claims = 0
+            let verified = 0
+            let changed = 0
+            for (const document of documents) {
+              const before = document.claims.map((claim) => claim.quoteVerified).join(',')
+              const result = verifyDocumentQuotes(document)
+              claims += result.total
+              verified += result.verified
+              if (document.claims.map((claim) => claim.quoteVerified).join(',') !== before) changed++
+            }
+            if (changed) persistOpinionStore()
+            sendJson(res, 200, {
+              documents: documents.length,
+              claims,
+              verified,
+              verifiedRate: claims ? Number((verified / claims * 100).toFixed(1)) : 0,
+              changed,
+            })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        // ---- 博主可靠性统计（按作者维度的观点回测） ----
+        if (path === '/api/opinions/author-stats') {
+          if (req.method === 'GET') {
+            sendJson(res, 200, loadAuthorStats() ?? { version: 1, updatedAt: 0, authors: [], message: '尚未计算，POST 该接口刷新' })
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as { holdingDays?: number; verifiedOnly?: boolean }
+              const result = await refreshAuthorStats((code) => getKlineWithCache(code, 'day', 2000), {
+                holdingDays: body.holdingDays ?? 20,
+                verifiedOnly: body.verifiedOnly ?? true,
+              })
+              sendJson(res, 200, result)
+            } catch (e) {
+              sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
           return
         }
 

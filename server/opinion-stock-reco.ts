@@ -33,6 +33,8 @@ export interface OpinionStockRecoItem {
   confidence: number
   agreement: number
   authors: string[]
+  /** 支撑该观点的内容类型 */
+  kinds?: Array<'pin' | 'longform' | 'manual'>
   claimCount: number
   latestAt: number
   theses: string[]
@@ -53,6 +55,12 @@ export interface OpinionStockRecoOptions {
   watchlist?: string[]
   preferCodes?: string[]
   stocks?: Array<Pick<SnapshotStock, 'code' | 'name' | 'industry' | 'amount' | 'mktcap' | 'price' | 'changePct'>>
+  /** 博主可靠性映射（名称 -> 0~1），来自观点回测的作者维度 */
+  authorReliability?: Record<string, number>
+  /** 只采用引用能在原文逐字命中的 claim */
+  verifiedOnly?: boolean
+  /** 覆盖内容类型权重（想法/长文/手工） */
+  kindWeights?: Partial<Record<'pin' | 'longform' | 'manual', number>>
 }
 
 function stanceLabel(stance: OpinionStance): string {
@@ -116,6 +124,7 @@ export function aggregateOpinionStockReco(
       confidence: s.confidence,
       agreement: s.agreement,
       authors: s.authors,
+      kinds: s.kinds,
       claimCount: s.claimCount,
       latestAt: s.latestAt,
       theses: s.theses.slice(0, 2),
@@ -250,6 +259,9 @@ export function buildOpinionStockReco(options: OpinionStockRecoOptions = {}): {
     platform: options.platform,
     maxAgeDays: days,
     now: options.now,
+    authorReliability: options.authorReliability,
+    verifiedOnly: options.verifiedOnly,
+    kindWeights: options.kindWeights,
   })
   const direct = aggregateOpinionStockReco(signals, { ...options, days, limit: 100 })
   const proxies = aggregateIndustryOpinionProxies(documents, {

@@ -1,4 +1,11 @@
-import type { OpinionDocument, OpinionPlatform, OpinionStance } from './opinions.ts'
+import {
+  OPINION_KIND_WEIGHT,
+  opinionDocumentKind,
+  type OpinionDocument,
+  type OpinionDocumentKind,
+  type OpinionPlatform,
+  type OpinionStance,
+} from './opinions.ts'
 
 export interface OpinionSignalEvidence {
   documentId: string
@@ -23,6 +30,8 @@ export interface OpinionSignal {
   confidence: number
   agreement: number
   authors: string[]
+  /** 支撑该信号的来源内容类型（想法/长文/手工） */
+  kinds?: OpinionDocumentKind[]
   claimCount: number
   latestAt: number
   horizonDays: number
@@ -36,6 +45,10 @@ export interface OpinionSignalOptions {
   now?: number
   maxAgeDays?: number
   authorReliability?: Record<string, number>
+  /** 只采用引用可在原文逐字命中的 claim */
+  verifiedOnly?: boolean
+  /** 内容类型权重覆盖（默认用 OPINION_KIND_WEIGHT：想法 0.4 / 长文 1 / 手工 0.8） */
+  kindWeights?: Partial<Record<OpinionDocumentKind, number>>
 }
 
 const DAY = 86_400_000
@@ -70,7 +83,12 @@ export function buildOpinionSignals(
       const recency = Math.exp(-Math.LN2 * ageDays / halfLife)
       const reliability = options.authorReliability?.[document.authorName] ?? 0.5
       const authorWeight = 0.5 + Math.max(0, Math.min(1, reliability))
-      const weight = Math.max(0.05, claim.confidence) * recency * authorWeight
+      // 引用无法逐字命中的 claim 视为抽取幻觉：verifiedOnly 时直接丢弃，否则减半
+      if (options.verifiedOnly && claim.quoteVerified === false) continue
+      const quoteWeight = claim.quoteVerified === false ? 0.5 : claim.quoteVerified === true ? 1.1 : 1
+      const kind = opinionDocumentKind(document)
+      const kindWeight = options.kindWeights?.[kind] ?? OPINION_KIND_WEIGHT[kind]
+      const weight = Math.max(0.05, claim.confidence) * recency * authorWeight * quoteWeight * kindWeight
       const list = grouped.get(claim.code) ?? []
       list.push({ document, claim, weight })
       grouped.set(claim.code, list)
@@ -87,6 +105,7 @@ export function buildOpinionSignals(
     const agreement = totalWeight > 0 ? Math.abs(directionalWeight) / totalWeight : 0
     const confidence = Math.min(1, totalWeight / 2) * agreement
     const ordered = [...items].sort((a, b) => b.document.publishedAt - a.document.publishedAt)
+    const kinds = [...new Set(ordered.map((item) => opinionDocumentKind(item.document)))]
     const representative = ordered[0].claim
     const authors = [...new Set(ordered.map((item) => item.document.authorName))]
     const horizonDays = totalWeight > 0
@@ -101,6 +120,7 @@ export function buildOpinionSignals(
       confidence: round(confidence, 4),
       agreement: round(agreement, 4),
       authors,
+      kinds,
       claimCount: items.length,
       latestAt: Math.max(...items.map((item) => item.document.publishedAt)),
       horizonDays: Math.max(1, Math.round(horizonDays)),
