@@ -825,6 +825,7 @@ export interface DigestPushConfigResponse {
 export async function fetchLimitUpBoard(force = false, intraday = true): Promise<{
   board: LimitUpBoard
   cachedAt: number
+  consensus: Record<string, { score: number; lineCount: number; notes: string[] }>
   history: Array<{ date: string; sentiment: LimitUpSentiment }>
 }> {
   const params = new URLSearchParams()
@@ -835,7 +836,12 @@ export async function fetchLimitUpBoard(force = false, intraday = true): Promise
     const err = (await res.json().catch(() => null)) as { error?: string } | null
     throw new Error(err?.error ?? `limit-up http ${res.status}`)
   }
-  return (await res.json()) as { board: LimitUpBoard; cachedAt: number; history: Array<{ date: string; sentiment: LimitUpSentiment }> }
+  return (await res.json()) as {
+    board: LimitUpBoard
+    cachedAt: number
+    consensus: Record<string, { score: number; lineCount: number; notes: string[] }>
+    history: Array<{ date: string; sentiment: LimitUpSentiment }>
+  }
 }
 
 export async function fetchLimitUpBacktest(): Promise<LimitUpBacktest> {

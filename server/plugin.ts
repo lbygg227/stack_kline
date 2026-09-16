@@ -110,6 +110,7 @@ import {
   rebuildDailyPools,
   saveLimitUpBacktest,
 } from './limit-up-history.ts'
+import { buildCapitalConsensus, type CapitalConsensus } from './capital-consensus.ts'
 import {
   buildDailyDigest,
   DailyDigestScheduler,
@@ -201,6 +202,19 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 
 /** 涨停板当日缓存：构建一次需要日K回溯 + 分时（约 20s），不随请求重复计算 */
 let limitUpCache: { at: number; board: LimitUpBoard } | null = null
+/** 资金共识分：与涨停板一起缓存，供推荐与接口复用 */
+let consensusCache: { at: number; map: Map<string, CapitalConsensus> } | null = null
+
+function currentConsensus(): Map<string, CapitalConsensus> {
+  if (consensusCache && Date.now() - consensusCache.at < 10 * 60_000) return consensusCache.map
+  try {
+    const map = buildCapitalConsensus({ board: limitUpCache?.board ?? null, dragonLimit: 200, fundDays: 5 })
+    consensusCache = { at: Date.now(), map }
+    return map
+  } catch {
+    return new Map()
+  }
+}
 
 async function refreshLimitUpBoard(withIntraday: boolean): Promise<LimitUpBoard> {
   const stocks = service.stocksWithIndustry()
@@ -256,6 +270,7 @@ export function marketDataPlugin(): Plugin {
       }))
       server.httpServer?.once('close', () => {
         limitUpCache = null
+        consensusCache = null
         opinionScheduler.stop()
         eventCollectScheduler.stop()
         fundFlowScheduler.stop()
@@ -506,7 +521,13 @@ export function marketDataPlugin(): Plugin {
             const board = force || !limitUpCache || Date.now() - limitUpCache.at > 10 * 60_000
               ? await refreshLimitUpBoard(withIntraday)
               : limitUpCache.board
-            sendJson(res, 200, { board, cachedAt: limitUpCache?.at ?? 0, history: loadBoardHistory().days.slice(0, 20).map((day) => ({ date: day.date, sentiment: day.sentiment })) })
+            const consensus = currentConsensus()
+            sendJson(res, 200, {
+              board,
+              cachedAt: limitUpCache?.at ?? 0,
+              consensus: Object.fromEntries([...consensus.entries()].map(([code, item]) => [code, item])),
+              history: loadBoardHistory().days.slice(0, 20).map((day) => ({ date: day.date, sentiment: day.sentiment })),
+            })
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
@@ -553,7 +574,11 @@ export function marketDataPlugin(): Plugin {
           }
           try {
             const board = currentLimitUpBoard()
-            const result = buildTodayRecommendations(service.stocksWithIndustry(), board ? { board } : {})
+            const consensus = currentConsensus()
+            const result = buildTodayRecommendations(
+              service.stocksWithIndustry(),
+              board ? { board, consensus } : { consensus },
+            )
             sendJson(res, 200, result)
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })

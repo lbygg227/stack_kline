@@ -8,6 +8,7 @@ import { useResearch } from '../composables/useResearch'
 const { goFullChart } = useResearch()
 
 const board = ref<LimitUpBoard | null>(null)
+const consensus = ref<Record<string, { score: number; lineCount: number; notes: string[] }>>({})
 const history = ref<Array<{ date: string; sentiment: LimitUpBoard['sentiment'] }>>([])
 const loading = ref(false)
 const error = ref('')
@@ -52,6 +53,7 @@ async function load() {
   try {
     const res = await fetchLimitUpBoard(false)
     board.value = res.board
+    consensus.value = res.consensus ?? {}
     history.value = res.history
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -66,6 +68,7 @@ async function rebuild() {
   try {
     const res = await fetchLimitUpBoard(true)
     board.value = res.board
+    consensus.value = res.consensus ?? {}
     history.value = res.history
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
@@ -193,6 +196,9 @@ onMounted(() => {
                 <span>{{ item.topSector || item.industry || '—' }}</span>
                 <span v-if="item.topSectorCount">（{{ item.topSectorCount }} 家）</span>
                 <span class="num">{{ fmtYi(item.amount) }}</span>
+              </div>
+              <div v-if="consensus[item.code]" class="lu-card-consensus" :class="{ strong: consensus[item.code].lineCount >= 3 }">
+                资金共识 {{ consensus[item.code].score }} · {{ consensus[item.code].lineCount }} 线共振
               </div>
             </button>
           </div>
@@ -392,6 +398,8 @@ onMounted(() => {
 .lu-card-mid b { color: var(--text-1); }
 .lu-card-bot { display: flex; gap: 4px; font-size: 11px; color: var(--text-3); }
 .lu-card-bot .num { margin-left: auto; }
+.lu-card-consensus { margin-top: 2px; font-size: 10px; color: var(--text-3); }
+.lu-card-consensus.strong { color: var(--up); font-weight: 600; }
 
 .lu-table { width: 100%; border-collapse: collapse; font-size: 12px; }
 .lu-table th, .lu-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }

@@ -10,6 +10,7 @@ import { buildFundStockReco } from './fund-stock-reco.ts'
 import { buildDragonTigerReco } from './dragon-tiger-stock-reco.ts'
 import { buildIndustryStats } from './screening-strategies.ts'
 import { PHASE_STYLE_MULTIPLIER, type LimitUpBoard, type SectorBoard } from './limit-up.ts'
+import type { CapitalConsensus } from './capital-consensus.ts'
 import { readJson, writeJson } from './store.ts'
 import {
   getConfidenceScale,
@@ -128,6 +129,10 @@ export interface RecommendationRecord {
     firstSealAt?: string
     breakCount?: number
     phase?: string
+    /** 资金共识分（三线合成分） */
+    consensusScore?: number
+    /** 命中的资金线数量 */
+    consensusLines?: number
   }
 }
 
@@ -497,7 +502,11 @@ function buildFundRecords(): RecommendationRecord[] {
  *   - limit_up 打板：有板块效应（同板块 >= 3 家涨停）的首板 / 低板
  *   - relay   补涨：热点板块内尚未涨停、量价配合的二线
  */
-function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): RecommendationRecord[] {
+function buildBoardRecords(
+  stocks: SnapshotStock[],
+  board: LimitUpBoard,
+  consensus?: Map<string, CapitalConsensus>,
+): RecommendationRecord[] {
   const records: RecommendationRecord[] = []
   const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
   const phase = board.sentiment.phase
@@ -515,9 +524,11 @@ function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): Recomm
     if (!isLeader && !hasSectorEffect) continue
     if (item.board >= 6) continue // 6 板以上空间有限，交给观察名单
     const style: RecommendationStyle = isLeader ? 'leader' : 'limit_up'
-    const reasonText = isLeader
+    const agree = consensus?.get(item.code)
+    const reasonText = (isLeader
       ? '板块龙头：' + item.board + ' 连板，' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停'
-      : '板块效应打板：' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停，本股今日涨停'
+      : '板块效应打板：' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停，本股今日涨停') +
+      (agree && agree.lineCount >= 2 ? '｜资金三线共振 ' + agree.lineCount + ' 条（共识分 ' + agree.score + '）' : '')
     records.push(makeRecord({
       id: 'board:' + style + ':' + item.code,
       code: item.code,
@@ -525,7 +536,8 @@ function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): Recomm
       style,
       channel: 'board',
       thesis: reasonText,
-      score: Math.max(45, Math.min(98, item.recognition)),
+      // 共识分本身已含「广度」加成，这里直接取两者较大值，避免重复加成
+      score: Math.max(45, Math.min(98, Math.round(Math.max(item.recognition, agree?.score ?? 0)))),
       evidence: [
         item.board > 1 ? item.board + ' 连板' : '首板',
         (item.firstSealAt ? item.firstSealAt + ' 封板' : '封板时间未知') + (item.breakCount ? '，炸板 ' + item.breakCount + ' 次' : ''),
@@ -535,17 +547,20 @@ function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): Recomm
       price: item.price,
       changePct: item.changePct,
       industry: item.industry,
-      reasons: boardReasons({
-        board: item.board,
-        isSectorLeader: item.isSectorLeader,
-        topSector: item.topSector,
-        topSectorCount: item.topSectorCount,
-        firstSealAt: item.firstSealAt,
-        breakCount: item.breakCount,
-        recognition: item.recognition,
-        sectorNames: item.concepts,
-        ...sentimentBase,
-      }),
+      reasons: [
+        ...boardReasons({
+          board: item.board,
+          isSectorLeader: item.isSectorLeader,
+          topSector: item.topSector,
+          topSectorCount: item.topSectorCount,
+          firstSealAt: item.firstSealAt,
+          breakCount: item.breakCount,
+          recognition: item.recognition,
+          sectorNames: item.concepts,
+          ...sentimentBase,
+        }),
+        ...(agree && agree.lineCount >= 2 ? [consensusReason(agree)] : []),
+      ],
       board: {
         height: item.board,
         recognition: item.recognition,
@@ -555,6 +570,8 @@ function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): Recomm
         firstSealAt: item.firstSealAt,
         breakCount: item.breakCount,
         phase,
+        consensusScore: agree?.score,
+        consensusLines: agree?.lineCount,
       },
     }))
   }
@@ -581,6 +598,7 @@ function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): Recomm
   for (const { stock, sector } of [...candidates.values()]
     .sort((a, b) => b.sector.limitUpCount - a.sector.limitUpCount || b.stock.changePct - a.stock.changePct)
     .slice(0, 20)) {
+    const relayAgree = consensus?.get(stock.code)
     records.push(makeRecord({
       id: 'board:relay:' + stock.code,
       code: stock.code,
@@ -588,7 +606,10 @@ function buildBoardRecords(stocks: SnapshotStock[], board: LimitUpBoard): Recomm
       style: 'relay',
       channel: 'board',
       thesis: '板块补涨：' + sector.name + ' 今日 ' + sector.limitUpCount + ' 家涨停，本股尚未启动',
-      score: Math.max(42, Math.min(88, 45 + sector.limitUpCount * 4 + Math.min(12, stock.changePct * 2))),
+      score: Math.max(
+        42,
+        Math.min(88, Math.round(Math.max(45 + sector.limitUpCount * 4 + Math.min(12, stock.changePct * 2), relayAgree?.score ?? 0))),
+      ),
       evidence: [
         '板块 ' + sector.name + ' 涨停 ' + sector.limitUpCount + ' 家，最高 ' + sector.maxBoard + ' 板',
         '板块龙头 ' + sector.leaderName,
@@ -683,6 +704,30 @@ function mergeRecord(target: RecommendationRecord, incoming: RecommendationRecor
   }
 }
 
+/** 资金共识理由：把三条资金线的检查结果写成一条可验证的理由 */
+function consensusReason(consensus: CapitalConsensus): RecommendationReason {
+  const lines: string[] = []
+  if (consensus.parts.board != null) lines.push('涨停板 ' + consensus.parts.board)
+  if (consensus.parts.dragon != null) lines.push('龙虎榜 ' + consensus.parts.dragon)
+  if (consensus.parts.fund != null) lines.push('主力资金 ' + consensus.parts.fund)
+  return {
+    dimension: 'fund',
+    key: 'capital_consensus',
+    label: '资金三线共振（' + consensus.lineCount + ' 条）',
+    detail: lines.join(' / ') + '；共识分 ' + consensus.score + '。' + consensus.notes.join('；'),
+    weight: 0.26,
+    strength: Math.max(35, Math.min(92, consensus.score)),
+    metrics: {
+      consensusScore: consensus.score,
+      lines: consensus.lineCount,
+      boardLine: consensus.parts.board ?? 0,
+      dragonLine: consensus.parts.dragon ?? 0,
+      fundLine: consensus.parts.fund ?? 0,
+    },
+    expect: '多线共振成立 → 次日溢价比单线标的更高；若三线共振仍跑输大盘则证伪',
+  }
+}
+
 /** 目标价系数：按历史实际达成幅度缩放目标价，避免系统性高估 */
 function applyTargetFactor(levels: RecommendationLevels, factor: number): RecommendationLevels {
   if (!levels.entry || !levels.target || !Number.isFinite(factor) || factor === 1) return levels
@@ -700,7 +745,7 @@ function averageDimensionWeight(item: RecommendationRecord, dimensionWeights: Re
 
 export function buildTodayRecommendations(
   stocks: SnapshotStock[],
-  options: { coolingDays?: number; board?: LimitUpBoard } = {},
+  options: { coolingDays?: number; board?: LimitUpBoard; consensus?: Map<string, CapitalConsensus> } = {},
 ): RecommendationListResponse {
   const all = [
     ...buildTechnicalRecords(stocks),
@@ -708,7 +753,7 @@ export function buildTodayRecommendations(
     ...buildOpinionRecords(stocks),
     ...buildFundRecords(),
     ...buildDragonRecords(),
-    ...(options.board ? buildBoardRecords(stocks, options.board) : []),
+    ...(options.board ? buildBoardRecords(stocks, options.board, options.consensus) : []),
   ]
   const byCode = new Map<string, RecommendationRecord>()
   for (const item of all) {
