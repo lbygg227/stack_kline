@@ -1272,8 +1272,14 @@ export interface SectorTrend {
   activeRatio: number
   trend: '升温' | '持平' | '退潮'
   deltaPct: number
+  /** 板块成分股近 5 个交易日累计平均涨幅（%） */
+  change5d: number
+  /** 生命周期：刚启动 / 持续升温 / 高位 / 退潮 / 震荡 */
+  stage: SectorStage
   series: number[]
 }
+
+export type SectorStage = '刚启动' | '持续升温' | '高位' | '退潮' | '震荡'
 
 export interface SectorRotationItem {
   name: string
@@ -1308,6 +1314,7 @@ export interface SectorTrendBacktest {
   bySectorTrend: SectorBucketStat[]
   bySectorCount: SectorBucketStat[]
   byLeader: SectorBucketStat[]
+  byStage: SectorBucketStat[]
   conclusion: string[]
 }
 
@@ -1362,6 +1369,13 @@ export interface RecommendationBoardContext {
   sectorLadder?: Record<string, number>
   sectorFirstSealAt?: string
   sectorMainNetInflowYi?: number
+  /** 板块趋势：升温 / 持平 / 退潮 */
+  sectorTrend?: string
+  sectorTrendDeltaPct?: number
+  /** 板块生命周期阶段：刚启动 / 持续升温 / 高位 / 退潮 / 震荡 */
+  sectorStage?: SectorStage
+  /** 板块成分股近 5 个交易日累计平均涨幅（%） */
+  sectorChange5d?: number
 }
 
 export interface RecommendationListResponse {

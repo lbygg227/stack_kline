@@ -222,13 +222,13 @@ let consensusCache: { at: number; map: Map<string, CapitalConsensus> } | null = 
  * 依据：近 66 个交易日验证，板块升温样本打板均收益 +1.49%（胜率 55.5%），
  * 退潮样本 +0.94%（胜率 51.2%），因此升温 +6%、退潮 -8%。
  */
-function currentSectorTrends(): Map<string, { trend: string; deltaPct: number }> {
+function currentSectorTrends(): Map<string, { trend: string; deltaPct: number; stage: string; change5d: number }> {
   try {
     const file = loadSectorHistory()
     if (!file) return new Map()
-    const map = new Map<string, { trend: string; deltaPct: number }>()
+    const map = new Map<string, { trend: string; deltaPct: number; stage: string; change5d: number }>()
     for (const item of computeSectorTrends(file, { limit: 200 })) {
-      map.set(item.name, { trend: item.trend, deltaPct: item.deltaPct })
+      map.set(item.name, { trend: item.trend, deltaPct: item.deltaPct, stage: item.stage, change5d: item.change5d })
     }
     return map
   } catch {
@@ -461,6 +461,7 @@ export function marketDataPlugin(): Plugin {
             const digest = await buildDailyDigest({
               stocks: service.stocksWithIndustry(),
               loadBars: (code) => getKlineWithCache(code, 'day', 2000),
+              board: currentLimitUpBoard(),
               push: url.searchParams.get('push') === '1',
             })
             sendJson(res, 200, { digest, channel: digestPushChannel() })

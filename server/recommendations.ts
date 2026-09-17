@@ -142,6 +142,10 @@ export interface RecommendationRecord {
     /** 板块趋势：升温 / 持平 / 退潮（近 66 个交易日序列判定） */
     sectorTrend?: string
     sectorTrendDeltaPct?: number
+    /** 板块生命周期阶段：刚启动 / 持续升温 / 高位 / 退潮 / 震荡 */
+    sectorStage?: string
+    /** 板块成分股近 5 个交易日累计平均涨幅（%） */
+    sectorChange5d?: number
   }
 }
 
@@ -542,7 +546,7 @@ function buildBoardRecords(
   stocks: SnapshotStock[],
   board: LimitUpBoard,
   consensus?: Map<string, CapitalConsensus>,
-  sectorTrends?: Map<string, { trend: string; deltaPct: number }>,
+  sectorTrends?: Map<string, { trend: string; deltaPct: number; stage?: string; change5d?: number }>,
 ): RecommendationRecord[] {
   const records: RecommendationRecord[] = []
   const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
@@ -567,6 +571,11 @@ function buildBoardRecords(
     // 板块趋势乘数：历史验证「升温板块打板均收益 +1.49% vs 退潮 +0.94%」
     const trendInfo = item.topSector ? sectorTrends?.get(item.topSector) : undefined
     const trendMultiplier = trendInfo?.trend === '升温' ? 1.06 : trendInfo?.trend === '退潮' ? 0.92 : 1
+    // 板块阶段乘数：「高位」阶段（5 日累计涨幅或连续活跃度高）历史打板均收益 +2.04%（胜率 59.6%，928 样本）
+    // vs 震荡 +0.96%，说明强者恒强；但样本只覆盖 66 个交易日、单一市场环境，按收缩原则只取一半力度
+    const stageMultiplier = trendInfo?.stage === '高位' ? 1.04 : trendInfo?.stage === '持续升温' ? 1.02 : 1
+    // 趋势与阶段口径部分重叠（都基于涨停家数序列），合并后设上限，避免重复加成
+    const sectorMultiplier = Math.min(1.12, trendMultiplier * stageMultiplier)
     const reasonText = (isLeader
       ? '板块龙头：' + item.board + ' 连板，' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停'
       : '板块效应打板：' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停，本股今日涨停') +
@@ -579,7 +588,7 @@ function buildBoardRecords(
       channel: 'board',
       thesis: reasonText,
       // 共识分本身已含「广度」加成，这里直接取两者较大值，避免重复加成；再乘板块趋势
-      score: Math.max(40, Math.min(98, Math.round(Math.max(item.recognition, agree?.score ?? 0) * trendMultiplier))),
+      score: Math.max(40, Math.min(98, Math.round(Math.max(item.recognition, agree?.score ?? 0) * sectorMultiplier))),
       evidence: [
         item.board > 1 ? item.board + ' 连板' : '首板',
         (item.firstSealAt ? item.firstSealAt + ' 封板' : '封板时间未知') + (item.breakCount ? '，炸板 ' + item.breakCount + ' 次' : ''),
@@ -605,6 +614,8 @@ function buildBoardRecords(
           sectorHeat: topSectorInfo?.heat,
           sectorTrend: trendInfo?.trend,
           sectorTrendDeltaPct: trendInfo?.deltaPct,
+          sectorStage: trendInfo?.stage,
+          sectorChange5d: trendInfo?.change5d,
           ...sentimentBase,
         }),
         ...(agree && agree.lineCount >= 2 ? [consensusReason(agree)] : []),
@@ -626,6 +637,8 @@ function buildBoardRecords(
         sectorMainNetInflowYi: topSectorInfo ? Number((topSectorInfo.mainNetInflow / 1e8).toFixed(2)) : undefined,
         sectorTrend: trendInfo?.trend,
         sectorTrendDeltaPct: trendInfo?.deltaPct,
+        sectorStage: trendInfo?.stage,
+        sectorChange5d: trendInfo?.change5d,
       },
     }))
   }
@@ -807,7 +820,7 @@ export function buildTodayRecommendations(
     coolingDays?: number
     board?: LimitUpBoard
     consensus?: Map<string, CapitalConsensus>
-    sectorTrends?: Map<string, { trend: string; deltaPct: number }>
+    sectorTrends?: Map<string, { trend: string; deltaPct: number; stage?: string; change5d?: number }>
   } = {},
 ): RecommendationListResponse {
   const all = [

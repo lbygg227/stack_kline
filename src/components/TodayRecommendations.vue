@@ -553,6 +553,21 @@ onMounted(() => void load())
                   </b>
                 </div>
                 <div class="level-row"><span>板块最早封板</span><b>{{ selected.board.sectorFirstSealAt || '—' }}</b></div>
+                <div v-if="selected.board.sectorStage" class="level-row">
+                  <span>板块阶段</span>
+                  <b>
+                    {{ selected.board.sectorStage }}
+                    <span class="sector-heat">
+                      5 日 {{ (selected.board.sectorChange5d ?? 0) > 0 ? '+' : '' }}{{ selected.board.sectorChange5d ?? 0 }}%
+                    </span>
+                  </b>
+                </div>
+                <div v-if="selected.board.sectorTrend" class="level-row">
+                  <span>板块趋势</span>
+                  <b :class="selected.board.sectorTrend === '升温' ? 'up' : selected.board.sectorTrend === '退潮' ? 'down' : ''">
+                    {{ selected.board.sectorTrend }}（{{ (selected.board.sectorTrendDeltaPct ?? 0) > 0 ? '+' : '' }}{{ selected.board.sectorTrendDeltaPct ?? 0 }}%）
+                  </b>
+                </div>
                 <div class="level-row"><span>本股位置</span>
                   <b>{{ selected.board.isSectorLeader ? '板块龙头（辨识度第一）' : '板块跟随标的' }}</b>
                 </div>

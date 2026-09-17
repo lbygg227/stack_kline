@@ -15,6 +15,7 @@ import type {
   LimitUpBoard,
   LimitUpItem,
   SectorRotationItem,
+  SectorStage,
   SectorTrend,
   SectorTrendBacktest,
   SentimentPhase,
@@ -34,6 +35,9 @@ const sectorDetail = ref<{ name: string; type: 'concept' | 'industry' } | null>(
 const sectorTrends = ref<SectorTrend[]>([])
 const trendLoading = ref(false)
 const trendFilter = ref<'升温' | '退潮' | '全部'>('升温')
+/** 阶段筛选：区分「刚启动」和「已经涨了一周」 */
+const stageFilter = ref<SectorStage | '全部'>('全部')
+const STAGE_ORDER: SectorStage[] = ['刚启动', '持续升温', '高位', '退潮', '震荡']
 const rotation = ref<SectorRotationItem[]>([])
 const rotationDate = ref('')
 const rotationDatePrev = ref('')
@@ -115,11 +119,25 @@ async function rebuild() {
 
 const fmtYi = (value: number) => (value / 1e8).toFixed(1) + '亿'
 
-const visibleTrends = computed(() =>
-  trendFilter.value === '全部'
+const visibleTrends = computed(() => {
+  const byTrend = trendFilter.value === '全部'
     ? sectorTrends.value
-    : sectorTrends.value.filter((item) => item.trend === trendFilter.value),
-)
+    : sectorTrends.value.filter((item) => item.trend === trendFilter.value)
+  return stageFilter.value === '全部' ? byTrend : byTrend.filter((item) => item.stage === stageFilter.value)
+})
+
+const stageCounts = computed(() => {
+  const counts = new Map<SectorStage, number>()
+  for (const item of sectorTrends.value) counts.set(item.stage, (counts.get(item.stage) ?? 0) + 1)
+  return counts
+})
+
+function stageClass(stage: SectorStage) {
+  return stage === '刚启动' ? 'stage-fresh'
+    : stage === '持续升温' ? 'stage-warming'
+      : stage === '高位' ? 'stage-high'
+        : stage === '退潮' ? 'stage-ebb' : 'stage-flat'
+}
 
 async function loadTrends() {
   trendLoading.value = true
@@ -312,6 +330,17 @@ onMounted(() => {
             <button :class="{ active: trendFilter === '退潮' }" @click="trendFilter = '退潮'">退潮榜</button>
             <button :class="{ active: trendFilter === '全部' }" @click="trendFilter = '全部'">全部</button>
           </div>
+          <div class="lu-subtabs">
+            <button :class="{ active: stageFilter === '全部' }" @click="stageFilter = '全部'">全部阶段</button>
+            <button
+              v-for="stage in STAGE_ORDER"
+              :key="stage"
+              :class="{ active: stageFilter === stage }"
+              @click="stageFilter = stageFilter === stage ? '全部' : stage"
+            >
+              {{ stage }}<span class="stage-count">{{ stageCounts.get(stage) ?? 0 }}</span>
+            </button>
+          </div>
           <button class="btn" :disabled="trendLoading" @click="loadTrends">{{ trendLoading ? '加载中…' : '刷新趋势' }}</button>
         </div>
         <p class="lu-bt-meta">
@@ -337,6 +366,18 @@ onMounted(() => {
               <thead><tr><th>板块涨停家数</th><th class="num">样本</th><th class="num">胜率</th><th class="num">打板均收益</th><th class="num">持有3日</th></tr></thead>
               <tbody>
                 <tr v-for="row in sectorBacktest.bySectorCount" :key="row.bucket">
+                  <td>{{ row.bucket }}</td>
+                  <td class="num">{{ row.samples }}</td>
+                  <td class="num">{{ row.winRate }}%</td>
+                  <td class="num" :class="row.averageNextChange >= 0 ? 'up' : 'down'">{{ row.averageNextChange }}%</td>
+                  <td class="num" :class="row.averageHold3FromClose >= 0 ? 'up' : 'down'">{{ row.averageHold3FromClose }}%</td>
+                </tr>
+              </tbody>
+            </table>
+            <table v-if="sectorBacktest.byStage?.length" class="lu-table">
+              <thead><tr><th>板块阶段</th><th class="num">样本</th><th class="num">胜率</th><th class="num">打板均收益</th><th class="num">持有3日</th></tr></thead>
+              <tbody>
+                <tr v-for="row in sectorBacktest.byStage" :key="row.bucket">
                   <td>{{ row.bucket }}</td>
                   <td class="num">{{ row.samples }}</td>
                   <td class="num">{{ row.winRate }}%</td>
@@ -386,7 +427,8 @@ onMounted(() => {
             <tr>
               <th>板块</th><th>类型</th><th class="num">今日</th><th class="num">昨日</th>
               <th class="num">近3日均</th><th class="num">前3日均</th><th class="num">变化</th>
-              <th class="num">连续在榜</th><th class="num">活跃度</th><th>近 20 日走势</th><th>趋势</th>
+              <th class="num">5日动量</th>
+              <th class="num">连续在榜</th><th class="num">活跃度</th><th>近 20 日走势</th><th>趋势</th><th>阶段</th>
             </tr>
           </thead>
           <tbody>
@@ -398,6 +440,7 @@ onMounted(() => {
               <td class="num">{{ item.avgRecent }}</td>
               <td class="num">{{ item.avgPrevious }}</td>
               <td class="num" :class="item.deltaPct >= 0 ? 'up' : 'down'">{{ item.deltaPct >= 0 ? '+' : '' }}{{ item.deltaPct }}%</td>
+              <td class="num" :class="item.change5d >= 0 ? 'up' : 'down'">{{ item.change5d >= 0 ? '+' : '' }}{{ item.change5d }}%</td>
               <td class="num">{{ item.streak }} 日</td>
               <td class="num">{{ item.activeRatio }}%</td>
               <td class="trend-spark">
@@ -410,8 +453,9 @@ onMounted(() => {
                 ></span>
               </td>
               <td :class="trendClass(item.trend)">{{ item.trend }}</td>
+              <td><span class="stage-tag" :class="stageClass(item.stage)">{{ item.stage }}</span></td>
             </tr>
-            <tr v-if="!visibleTrends.length"><td colspan="11" class="lu-empty-cell">暂无板块趋势数据（先在「历史回测」里重算一次）</td></tr>
+            <tr v-if="!visibleTrends.length"><td colspan="13" class="lu-empty-cell">暂无板块趋势数据（先在「历史回测」里重算一次）</td></tr>
           </tbody>
         </table>
       </section>
@@ -585,6 +629,13 @@ onMounted(() => {
 .lu-subtabs { display: flex; gap: 8px; margin-bottom: 8px; }
 .lu-subtabs button { padding: 3px 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); font-size: 11px; cursor: pointer; }
 .lu-subtabs button.active { border-color: var(--primary); color: var(--primary); }
+.stage-count { margin-left: 4px; opacity: 0.6; font-size: 10px; }
+.stage-tag { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 11px; border: 1px solid var(--border); }
+.stage-tag.stage-fresh { color: var(--up); border-color: var(--up); background: color-mix(in srgb, var(--up) 12%, transparent); }
+.stage-tag.stage-warming { color: #e08a2e; border-color: #e08a2e; }
+.stage-tag.stage-high { color: #b8860b; border-color: #b8860b; background: color-mix(in srgb, #b8860b 12%, transparent); }
+.stage-tag.stage-ebb { color: var(--down); border-color: var(--down); }
+.stage-tag.stage-flat { color: var(--muted, #888); }
 .lu-body { padding: 12px 20px 20px; }
 
 .lu-ladder { margin-bottom: 14px; }

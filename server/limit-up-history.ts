@@ -107,6 +107,13 @@ const dayOf = (timestamp: number): string => sessionDateOf(timestamp)
 const round = (value: number, digits = 2): number => Math.round(value * 10 ** digits) / 10 ** digits
 const average = (values: number[]): number => (values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0)
 
+/** 日涨幅序列（%）按复利累计，返回百分比 */
+const compoundChange = (values: number[]): number => {
+  if (!values.length) return 0
+  const factor = values.reduce((acc, value) => acc * (1 + (value || 0) / 100), 1)
+  return Number(((factor - 1) * 100).toFixed(2))
+}
+
 function percentile(values: number[], ratio: number): number {
   if (!values.length) return 0
   const sorted = [...values].sort((a, b) => a - b)
@@ -500,6 +507,33 @@ export interface SectorHistoryFile {
   sectors: SectorSeries[]
 }
 
+/** 板块生命周期：区分「刚点火」和「已经涨了一周」 */
+export type SectorStage = '刚启动' | '持续升温' | '高位' | '退潮' | '震荡'
+
+/**
+ * 用「连续活跃天数 + 近 5 日累计涨幅」判断板块所处阶段。
+ *  - 退潮：5 日累计 ≤-4%，或趋势转弱且 5 日累计不为正 → 不追
+ *  - 高位：5 日累计 ≥8%，或连续 ≥4 日活跃且 5 日累计 ≥4% → 钱已经进来一周，追高风险大
+ *  - 刚启动：连续 ≤2 日活跃、今日 ≥2 家涨停、5 日累计在 [-1%, 4%) → 刚点火、涨幅未走出来
+ *  - 持续升温：升温且 5 日累计为正（中段）
+ *
+ * 注意：宽基概念（一带一路、人工智能等）几乎每天都有成员涨停，streak 常年等于窗口长度，
+ * 因此 streak 必须配合涨幅一起看，否则会把所有宽概念都判成「高位」。
+ */
+export function classifySectorStage(input: {
+  trend: SectorTrend['trend']
+  streak: number
+  today: number
+  change5d: number
+}): SectorStage {
+  const { trend, streak, today, change5d } = input
+  if (change5d <= -4 || (trend === '退潮' && change5d <= 0)) return '退潮'
+  if (change5d >= 8 || (streak >= 4 && change5d >= 4)) return '高位'
+  if (streak <= 2 && today >= 2 && change5d >= -1 && change5d < 4) return '刚启动'
+  if (trend === '升温' && change5d > 0) return '持续升温'
+  return '震荡'
+}
+
 export interface SectorTrend {
   name: string
   type: 'industry' | 'concept'
@@ -515,6 +549,10 @@ export interface SectorTrend {
   activeRatio: number
   trend: '升温' | '持平' | '退潮'
   deltaPct: number
+  /** 板块成分股近 5 个交易日累计平均涨幅（%） */
+  change5d: number
+  /** 生命周期阶段 */
+  stage: SectorStage
   series: number[]
 }
 
@@ -653,6 +691,7 @@ export function computeSectorTrends(file: SectorHistoryFile, options: { limit?: 
       : deltaPct <= -25 || (last === 0)
         ? '退潮'
         : '持平'
+    const change5d = compoundChange(sector.points.slice(-5).map((point) => point.avgChangePct))
     trends.push({
       name: sector.name,
       type: sector.type,
@@ -665,6 +704,8 @@ export function computeSectorTrends(file: SectorHistoryFile, options: { limit?: 
       activeRatio: Number((series.filter((value) => value > 0).length / Math.max(1, series.length) * 100).toFixed(1)),
       trend,
       deltaPct: Number(deltaPct.toFixed(1)),
+      change5d,
+      stage: classifySectorStage({ trend, streak, today: last, change5d }),
       series: series.slice(-20),
     })
   }
@@ -695,6 +736,8 @@ export interface SectorTrendBacktest {
   bySectorCount: SectorBucketStat[]
   /** 按「板块内是否龙头」分桶（仅统计有涨停的板块） */
   byLeader: SectorBucketStat[]
+  /** 按「信号日板块所处阶段」分桶：刚启动 / 持续升温 / 高位 / 退潮 */
+  byStage: SectorBucketStat[]
   conclusion: string[]
 }
 
@@ -728,10 +771,12 @@ export function backtestSectorTrend(
   const byTrend = new Map<string, Row[]>()
   const byCount = new Map<string, Row[]>()
   const byLeader = new Map<string, Row[]>()
+  const byStage = new Map<string, Row[]>()
   let samples = 0
 
-  // (date, sectorKey) -> 该日涨停家数；并据此算「前一交易日趋势」
+  // (date, sectorKey) -> 该日涨停家数 / 板块平均涨幅；并据此算「前一交易日趋势与阶段」
   const countByDate = new Map<string, Map<string, number>>()
+  const changeByDate = new Map<string, Map<string, number>>()
   for (const sector of sectorSeries.sectors) {
     const key = sector.type + ':' + sector.name
     for (const point of sector.points) {
@@ -741,12 +786,18 @@ export function backtestSectorTrend(
         countByDate.set(point.date, day)
       }
       day.set(key, point.count)
+      let changeDay = changeByDate.get(point.date)
+      if (!changeDay) {
+        changeDay = new Map()
+        changeByDate.set(point.date, changeDay)
+      }
+      changeDay.set(key, point.avgChangePct)
     }
   }
   const dates = sectorSeries.dates
   const indexOfDate = new Map(dates.map((date, index) => [date, index]))
 
-  const trendOf = (dateIndex: number, key: string): { delta: number; count: number } | null => {
+  const trendOf = (dateIndex: number, key: string): { delta: number; count: number; stage: SectorStage } | null => {
     if (dateIndex < 3) return null
     const series: number[] = []
     for (let i = Math.max(0, dateIndex - 5); i <= dateIndex; i++) {
@@ -758,7 +809,19 @@ export function backtestSectorTrend(
     const avgRecent = average(recent)
     const avgPrevious = previous.length ? average(previous) : avgRecent
     const delta = avgPrevious > 0 ? (avgRecent - avgPrevious) / avgPrevious * 100 : (avgRecent > 0 ? 100 : 0)
-    return { delta, count: series.at(-1) ?? 0 }
+    const count = series.at(-1) ?? 0
+    const trend: SectorTrend['trend'] = delta >= 25 && avgRecent >= 2 ? '升温' : delta <= -25 || count === 0 ? '退潮' : '持平'
+    let streak = 0
+    for (let index = series.length - 1; index >= 0; index--) {
+      if (series[index] > 0) streak++
+      else break
+    }
+    const changes: number[] = []
+    for (let i = Math.max(0, dateIndex - 4); i <= dateIndex; i++) {
+      changes.push(changeByDate.get(dates[i])?.get(key) ?? 0)
+    }
+    const change5d = compoundChange(changes)
+    return { delta, count, stage: classifySectorStage({ trend, streak, today: count, change5d }) }
   }
 
   for (const pool of pools) {
@@ -776,12 +839,12 @@ export function backtestSectorTrend(
       if (!keys.length) continue
 
       // 取该股所属板块中「当下最强」的那个（涨停家数最多，其次趋势最高）
-      let best: { key: string; count: number; delta: number } | null = null
+      let best: { key: string; count: number; delta: number; stage: SectorStage } | null = null
       for (const key of keys) {
         const trend = trendOf(dateIndex, key)
         if (!trend) continue
         if (!best || trend.count > best.count || (trend.count === best.count && trend.delta > best.delta)) {
-          best = { key, count: trend.count, delta: trend.delta }
+          best = { key, count: trend.count, delta: trend.delta, stage: trend.stage }
         }
       }
       if (!best) continue
@@ -791,6 +854,7 @@ export function backtestSectorTrend(
       push(byTrend, trendBucket, row)
       push(byCount, countBucket, row)
       push(byLeader, best.count >= 4 ? '热门板块内' : '冷门板块内', row)
+      push(byStage, '板块阶段：' + best.stage, row)
     }
   }
 
@@ -799,6 +863,10 @@ export function backtestSectorTrend(
   const bySectorTrend = order.map((bucket) => bucketStat(bucket, byTrend.get(bucket) ?? [])).filter((item) => item.samples >= minSamples)
   const bySectorCount = countOrder.map((bucket) => bucketStat(bucket, byCount.get(bucket) ?? [])).filter((item) => item.samples >= minSamples)
   const leaderStats = [...byLeader.entries()].map(([bucket, rows]) => bucketStat(bucket, rows)).filter((item) => item.samples >= minSamples)
+  const stageOrder = ['刚启动', '持续升温', '高位', '退潮', '震荡']
+  const stageStats = stageOrder
+    .map((stage) => bucketStat('板块' + stage, byStage.get('板块阶段：' + stage) ?? []))
+    .filter((item) => item.samples >= minSamples)
 
   const rising = bySectorTrend.find((item) => item.bucket.includes('升温（+50'))
   const falling = bySectorTrend.find((item) => item.bucket === '板块退潮')
@@ -817,6 +885,16 @@ export function backtestSectorTrend(
       '板块 ≥8 家涨停时打板均收益 ' + many.averageNextChange + '%，仅 1 家涨停时 ' + few.averageNextChange + '%',
     )
   }
+  const fresh = stageStats.find((item) => item.bucket === '板块刚启动')
+  const extended = stageStats.find((item) => item.bucket === '板块高位')
+  if (fresh && extended) {
+    const gap = fresh.averageNextChange - extended.averageNextChange
+    conclusion.push(
+      '按板块阶段：刚启动 ' + fresh.averageNextChange + '%（胜率 ' + fresh.winRate + '%，样本 ' + fresh.samples + '）vs ' +
+      '高位 ' + extended.averageNextChange + '%（胜率 ' + extended.winRate + '%，样本 ' + extended.samples + '），差 ' + gap.toFixed(2) + 'pct' +
+      (gap > 0.3 ? ' → 优先做刚启动的板块' : gap < -0.3 ? ' → 高位板块反而更强，注意「强者恒强」' : ' → 两种阶段差别不大'),
+    )
+  }
   conclusion.push('口径：涨停日收盘买、次日收盘卖；板块归属按当前行业/概念映射近似（历史概念可能已变化）')
 
   return {
@@ -827,6 +905,7 @@ export function backtestSectorTrend(
     bySectorTrend,
     bySectorCount,
     byLeader: leaderStats,
+    byStage: stageStats,
     conclusion,
   }
 }
@@ -946,7 +1025,8 @@ export function saveSectorTrendBacktest(result: SectorTrendBacktest): void {
 export function loadSectorTrendBacktest(): SectorTrendBacktest | null {
   const raw = readJson<SectorTrendBacktest>(SECTOR_BACKTEST_FILE)
   if (!raw || !Array.isArray(raw.bySectorTrend)) return null
-  return raw
+  // 兼容旧快照：早期版本没有 byStage 分桶
+  return { ...raw, byStage: Array.isArray(raw.byStage) ? raw.byStage : [] }
 }
 
 export function loadLimitUpBacktest(): LimitUpBacktest | null {
