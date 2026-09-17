@@ -119,7 +119,7 @@ export async function buildDailyDigest(input: {
   const sectorLines: string[] = []
   if (sentiment) {
     sectorLines.push(
-      '情绪相位「' + sentiment.phase + '」（评分 ' + sentiment.score + '，涨停板口径）：涨停 ' + sentiment.limitUpCount +
+      '情绪相位「' + sentiment.phase + '」（评分 ' + sentiment.score + '，涨停板口径 ' + (board?.date ?? '未知') + '）：涨停 ' + sentiment.limitUpCount +
       ' / 跌停 ' + sentiment.limitDownCount + '，炸板率 ' + sentiment.brokenRate + '%，最高 ' + sentiment.maxBoard + ' 板' +
       (sentiment.yesterdayPremium ? '，昨日涨停今日 ' + fmtPct(sentiment.yesterdayPremium) : '') +
       (sentiment.promotionRate ? '，晋级率 ' + sentiment.promotionRate + '%' : ''),

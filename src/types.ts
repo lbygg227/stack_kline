@@ -1382,6 +1382,10 @@ export interface RecommendationListResponse {
   generatedAt: number
   total: number
   items: RecommendationRecord[]
+  /** 板块/涨停上下文的看板日期；落后时前端会明确提示 */
+  boardDate?: string
+  boardStale?: boolean
+  boardExpectedDate?: string
   grouped: Record<RecommendationStyle, RecommendationRecord[]>
   market?: MarketTemperature
   observing: RecommendationRecord[]

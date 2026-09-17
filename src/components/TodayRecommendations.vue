@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchRecommendations, fetchStockRecommendationHistory } from '../api'
 import type {
   RecommendationListResponse,
@@ -21,6 +21,15 @@ const showObserving = ref(false)
 const selectedSector = ref('')
 const sectorDetail = ref<{ name: string; type: 'concept' | 'industry' } | null>(null)
 const hotSectors = computed(() => data.value?.hotSectors ?? [])
+
+/** 数据生成时间：把「新不新」直接摆在界面上，避免再靠感觉判断延迟 */
+const updatedAt = computed(() => {
+  const at = data.value?.generatedAt
+  if (!at) return ''
+  const date = new Date(at)
+  return String(date.getHours()).padStart(2, '0') + ':' + String(date.getMinutes()).padStart(2, '0')
+    + ':' + String(date.getSeconds()).padStart(2, '0')
+})
 
 function sectorMatches(item: RecommendationRecord, sectorName: string): boolean {
   if (!sectorName) return true
@@ -215,7 +224,30 @@ async function loadHistory(code: string) {
   }
 }
 
-onMounted(() => void load())
+/** 静默刷新：页面可见时每 2 分钟拉一次，避免长时间停留在旧数据上 */
+let autoTimer: ReturnType<typeof setInterval> | null = null
+
+async function refreshQuietly() {
+  if (loading.value || document.visibilityState !== 'visible') return
+  try {
+    const next = await fetchRecommendations()
+    data.value = next
+    // 抽屉里选中的标的用最新数据对齐，避免显示过期理由
+    if (selected.value) selected.value = next.items.find((item) => item.code === selected.value?.code) ?? selected.value
+  } catch {
+    /* 静默刷新失败不打扰用户 */
+  }
+}
+
+onMounted(() => {
+  void load()
+  autoTimer = setInterval(() => void refreshQuietly(), 120_000)
+})
+
+onUnmounted(() => {
+  if (autoTimer) clearInterval(autoTimer)
+  autoTimer = null
+})
 </script>
 
 <template>
@@ -223,7 +255,10 @@ onMounted(() => void load())
     <header class="today-head">
       <div>
         <h2>今日推荐</h2>
-        <p>按置信度排序 · 点击任意标的查看入选依据</p>
+        <p>
+          按置信度排序 · 点击任意标的查看入选依据
+          <span v-if="updatedAt" class="updated-at">数据 {{ updatedAt }}（每 2 分钟自动刷新）</span>
+        </p>
       </div>
       <button class="btn" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新推荐' }}</button>
     </header>
@@ -240,6 +275,10 @@ onMounted(() => void load())
       <span class="temp-item">成交 <b>{{ data.market.totalAmountYi.toFixed(2) }}万亿</b></span>
       <span class="temp-state" :class="data.market.riskOff ? 'down' : data.market.riskOn ? 'up' : ''">
         {{ data.market.riskOff ? '风险偏好低' : data.market.riskOn ? '风险偏好高' : '中性' }}
+      </span>
+      <span v-if="data.boardDate" class="temp-item board-date" :class="{ stale: data.boardStale }">
+        板块数据 {{ data.boardDate }}
+        <b v-if="data.boardStale">落后（应为 {{ data.boardExpectedDate }}，后台重算中）</b>
       </span>
     </div>
 
@@ -630,6 +669,10 @@ onMounted(() => void load())
 .today-head p { margin: 2px 0 0; font-size: 11px; color: var(--text-3); line-height: 1.5; }
 .today-state { padding: 50px 20px; text-align: center; color: var(--text-3); }
 
+.updated-at { margin-left: 8px; opacity: 0.6; }
+.board-date { margin-left: auto; opacity: 0.75; }
+.board-date.stale { color: var(--down); opacity: 1; }
+.board-date b { font-weight: 500; }
 .market-temp {
   display: flex;
   flex-wrap: wrap;

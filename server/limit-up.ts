@@ -13,6 +13,7 @@ import type { SnapshotStock } from './eastmoney.ts'
 import type { KLineBar } from './tencent.ts'
 import { readJson, writeJson } from './store.ts'
 import { signalDateOf } from './trading-day.ts'
+import { filterSessionBars } from './board-cache.ts'
 
 const HISTORY_FILE = 'limit-up-history.json'
 const SNAPSHOT_FILE = 'limit-up-latest.json'
@@ -622,9 +623,13 @@ export async function buildLimitUpBoardFull(
   if (loaders.loadIntraday) {
     const limit = Math.max(0, Math.min(80, loaders.intradayLimit ?? 40))
     const targets = [...prelim.limitUp].sort((a, b) => b.amount - a.amount).slice(0, limit)
+    // 分时只取「信号日当天」的分钟线：缓存里若是昨天的分时，
+    // 会把昨天的封板时间、炸板次数算到今天头上（曾导致看板整体倒退一个交易日）
+    const sessionDate = signalDateOf(now)
     await mapLimit(targets, 4, async (item) => {
       try {
-        const bars = await loaders.loadIntraday!(item.code)
+        const raw = await loaders.loadIntraday!(item.code)
+        const bars = filterSessionBars(raw, sessionDate)
         const prices = limitPrices(stocks.find((stock) => stock.code === item.code)?.prevClose ?? 0, item.code, item.name)
         if (!prices || !bars.length) return
         sealInfo.set(item.code, sealStats(bars, prices.up))

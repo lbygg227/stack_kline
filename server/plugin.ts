@@ -107,6 +107,7 @@ import {
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
 import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
+import { BOARD_TTL_MS, expectedBoardDate, inTradingWindow, resolveBoard } from './board-cache.ts'
 import {
   backtestLimitUpPools,
   backtestSectorTrend,
@@ -214,6 +215,8 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 
 /** 涨停板当日缓存：构建一次需要日K回溯 + 分时（约 20s），不随请求重复计算 */
 let limitUpCache: { at: number; board: LimitUpBoard } | null = null
+let boardRefresh: Promise<LimitUpBoard | null> | null = null
+let boardRefreshStartedAt = 0
 /** 资金共识分：与涨停板一起缓存，供推荐与接口复用 */
 let consensusCache: { at: number; map: Map<string, CapitalConsensus> } | null = null
 
@@ -265,13 +268,77 @@ async function refreshLimitUpBoard(withIntraday: boolean): Promise<LimitUpBoard>
   return board
 }
 
-/** 取当日涨停板：优先内存缓存，其次落盘快照（服务重启后仍可用），都没有则返回 null（不阻塞请求） */
+/**
+ * 取当日涨停板：内存缓存 → 当日落盘快照 → 无。
+ *
+ * 关键点：**过期的快照不会被伪装成新鲜数据**。旧实现把昨日快照塞进内存并标记为「9 分钟前」，
+ * 新鲜度时钟被不断重置，导致当日看板永远不算、今日推荐长期显示上一个交易日的涨停池。
+ * 现在只回填「日期等于当前交易日」的快照，过期时顺手在后台重算一次。
+ */
 function currentLimitUpBoard(): LimitUpBoard | null {
-  if (limitUpCache && Date.now() - limitUpCache.at < 10 * 60_000) return limitUpCache.board
-  const snapshot = loadBoardSnapshot()
-  if (!snapshot) return null
-  limitUpCache = { at: Date.now() - 9 * 60_000, board: snapshot }
-  return snapshot
+  const now = Date.now()
+  const memory = limitUpCache
+  if (memory && memory.board.date === expectedBoardDate(now) && now - memory.at < BOARD_TTL_MS) return memory.board
+  const resolved = resolveBoard({ memory, snapshot: loadBoardSnapshot(), now })
+  if (resolved.adopt && resolved.board) limitUpCache = { at: now, board: resolved.board }
+  if (resolved.needsRefresh) scheduleBoardRefresh()
+  return resolved.board
+}
+
+/** 看板过期时的后台重算（同一时刻只跑一个，60 秒内不重复触发） */
+function scheduleBoardRefresh(): void {
+  if (boardRefresh) return
+  if (Date.now() - boardRefreshStartedAt < 60_000) return
+  boardRefreshStartedAt = Date.now()
+  boardRefresh = refreshLimitUpBoard(true)
+    .catch((e) => {
+      console.warn('[limit-up] 后台重算失败：', e instanceof Error ? e.message : e)
+      return null
+    })
+    .finally(() => {
+      boardRefresh = null
+    })
+}
+
+/** 交易日定时刷新看板：启动即跑一次（服务重启后立刻恢复当日看板），盘中每 5 分钟一次 */
+export class LimitUpBoardScheduler {
+  private timer: ReturnType<typeof setInterval> | null = null
+  private lastAt = 0
+  private running = false
+
+  start() {
+    if (this.timer) return
+    void this.tick()
+    this.timer = setInterval(() => void this.tick(), 60_000)
+    this.timer.unref?.()
+  }
+
+  stop() {
+    if (this.timer) clearInterval(this.timer)
+    this.timer = null
+  }
+
+  async tick(): Promise<void> {
+    if (this.running) return
+    const now = Date.now()
+    const expected = expectedBoardDate(now)
+    const current = limitUpCache?.board.date ?? loadBoardSnapshot()?.date ?? ''
+    // 当日看板已就绪：盘中每 5 分钟更新一次，收盘后不再重算
+    if (current === expected) {
+      if (!inTradingWindow(now) || now - this.lastAt < 5 * 60_000) return
+    } else if (!inTradingWindow(now) && now - this.lastAt < 5 * 60_000) {
+      return
+    }
+    this.running = true
+    this.lastAt = now
+    try {
+      await refreshLimitUpBoard(true)
+    } catch (e) {
+      console.warn('[limit-up] 定时刷新失败：', e instanceof Error ? e.message : e)
+    } finally {
+      this.running = false
+    }
+  }
 }
 
 export function marketDataPlugin(): Plugin {
@@ -280,6 +347,7 @@ export function marketDataPlugin(): Plugin {
   const fundFlowScheduler = new FundFlowRankScheduler()
   const dragonTigerScheduler = new DragonTigerRankScheduler()
   const digestScheduler = new DailyDigestScheduler()
+  const boardScheduler = new LimitUpBoardScheduler()
   const configureApiServer = (server: ViteDevServer) => {
       attachRemoteTunnel(server)
       opinionScheduler.start(() => service.stocksWithIndustry())
@@ -294,6 +362,7 @@ export function marketDataPlugin(): Plugin {
       dragonTigerScheduler.start(() => ({
         stocks: service.stocksWithIndustry(),
       }))
+      boardScheduler.start()
       digestScheduler.start(() => ({
         stocks: service.stocksWithIndustry(),
         loadBars: (code: string) => getKlineWithCache(code, 'day', 2000),
@@ -302,6 +371,7 @@ export function marketDataPlugin(): Plugin {
       server.httpServer?.once('close', () => {
         limitUpCache = null
         consensusCache = null
+        boardScheduler.stop()
         opinionScheduler.stop()
         eventCollectScheduler.stop()
         fundFlowScheduler.stop()
@@ -615,9 +685,15 @@ export function marketDataPlugin(): Plugin {
           const force = url.searchParams.get('force') === '1'
           const withIntraday = url.searchParams.get('intraday') !== '0'
           try {
-            const board = force || !limitUpCache || Date.now() - limitUpCache.at > 10 * 60_000
+            // 日期不是当日的缓存一律重算：否则「昨日的看板」会一直挡住今天的计算
+            // 日期不是当日的缓存一律重算：否则「昨日的看板」会一直挡住今天的计算
+            const cached = limitUpCache
+            const stale = !cached
+              || cached.board.date !== expectedBoardDate()
+              || Date.now() - cached.at > BOARD_TTL_MS
+            const board = force || stale || !cached
               ? await refreshLimitUpBoard(withIntraday)
-              : limitUpCache.board
+              : cached.board
             const consensus = currentConsensus()
             sendJson(res, 200, {
               board,
@@ -695,7 +771,13 @@ export function marketDataPlugin(): Plugin {
               service.stocksWithIndustry(),
               board ? { board, consensus, sectorTrends: currentSectorTrends() } : { consensus },
             )
-            sendJson(res, 200, result)
+            const expected = expectedBoardDate()
+            sendJson(res, 200, {
+              ...result,
+              boardDate: board?.date,
+              boardStale: !board || board.date !== expected,
+              boardExpectedDate: expected,
+            })
           } catch (e) {
             sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
           }
