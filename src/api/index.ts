@@ -28,6 +28,8 @@ import type {
   DragonTigerRecoResponse,
   AuthorStatsFile,
   SectorPoolResult,
+  SectorRotationResponse,
+  SectorTrendBacktest,
   SectorTrendsResponse,
   LimitUpBacktest,
   LimitUpBoard,
@@ -851,6 +853,19 @@ export async function fetchSectorTrends(limit = 60): Promise<SectorTrendsRespons
   const res = await fetch(`/api/sectors/trends?limit=${limit}`)
   if (!res.ok) throw new Error(`sector trends http ${res.status}`)
   return (await res.json()) as SectorTrendsResponse
+}
+
+export async function fetchSectorRotation(limit = 30): Promise<SectorRotationResponse> {
+  const res = await fetch(`/api/sectors/rotation?limit=${limit}`)
+  if (!res.ok) throw new Error(`sector rotation http ${res.status}`)
+  return (await res.json()) as SectorRotationResponse
+}
+
+export async function fetchSectorTrendBacktest(): Promise<SectorTrendBacktest | null> {
+  const res = await fetch('/api/sectors/backtest')
+  if (!res.ok) throw new Error(`sector backtest http ${res.status}`)
+  const data = (await res.json()) as SectorTrendBacktest & { cached?: boolean; error?: string }
+  return Array.isArray(data.bySectorTrend) ? data : null
 }
 
 export async function fetchSectorPool(sector: string, type: 'concept' | 'industry', limit = 30): Promise<SectorPoolResult> {

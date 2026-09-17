@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { buildSectorPool } from './sector-pool.ts'
-import { buildSectorSeries, computeSectorTrends, type DayPool } from './limit-up-history.ts'
+import {
+  buildSectorSeries,
+  computeSectorRotation,
+  computeSectorTrends,
+  type DayPool,
+} from './limit-up-history.ts'
 
 function stock(partial: {
   code: string
@@ -113,4 +118,59 @@ test('板块序列与趋势判定：升温 / 退潮', () => {
   assert.equal(a?.today, 4)
   assert.equal(a?.trend, '升温', 'A 板块涨停家数从 1 增到 4，应判为升温')
   assert.ok(b === undefined || b.trend === '退潮', 'B 板块最近无涨停：要么被过滤，要么判为退潮')
+})
+
+test('板块轮动按涨幅排名变化识别资金切换', () => {
+  const pools: DayPool[] = []
+  for (let day = 1; day <= 8; day++) {
+    pools.push({
+      date: '2026-08-' + String(10 + day).padStart(2, '0'),
+      limitUp: { ['sh60010' + day]: 1 },
+      limitDown: [],
+      broken: [],
+      nextPremium: {},
+      nextChange: {},
+      hold3: {},
+      hold3FromClose: {},
+      sealedAllDay: {},
+      maxBoard: 1,
+      ladder: { '1': 1 },
+    })
+  }
+  // A 概念：此前强、今天转弱；B 概念：此前弱、今天转强（切换点落在最后一个交易日）
+  const sectorDays = pools.flatMap((pool, index) => [
+    {
+      date: pool.date,
+      name: 'A概念',
+      type: 'concept' as const,
+      count: 1,
+      maxBoard: 1,
+      avgChangePct: index < 7 ? 3 : -2,
+      amountYi: index < 7 ? 20 : 5,
+      upCount: 10,
+      downCount: index < 7 ? 1 : 8,
+    },
+    {
+      date: pool.date,
+      name: 'B概念',
+      type: 'concept' as const,
+      count: 1,
+      maxBoard: 1,
+      avgChangePct: index < 7 ? -1 : 4,
+      amountYi: index < 7 ? 5 : 25,
+      upCount: index < 7 ? 2 : 9,
+      downCount: 8,
+    },
+  ])
+  const file = buildSectorSeries(pools, () => ({ industry: '电子', concepts: ['A概念'] }), {
+    days: 8,
+    sectorDays,
+  })
+  const rotation = computeSectorRotation(file, { limit: 10 })
+  const a = rotation.find((item) => item.name === 'A概念')
+  const b = rotation.find((item) => item.name === 'B概念')
+  assert.ok(a && b, '两个板块都应在轮动列表里')
+  assert.ok((b?.score ?? 0) > (a?.score ?? 0), '转强的 B 概念轮动分应高于转弱的 A 概念')
+  assert.ok((b?.rankDelta ?? 0) > 0, 'B 概念排名应上升')
+  assert.ok((a?.rankDelta ?? 0) < 0, 'A 概念排名应下降')
 })

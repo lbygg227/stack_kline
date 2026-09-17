@@ -109,7 +109,11 @@ import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import {
   backtestLimitUpPools,
+  backtestSectorTrend,
   buildSectorSeries,
+  computeSectorRotation,
+  loadSectorTrendBacktest,
+  saveSectorTrendBacktest,
   computeSectorTrends,
   loadLimitUpBacktest,
   loadSectorHistory,
@@ -212,6 +216,25 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 let limitUpCache: { at: number; board: LimitUpBoard } | null = null
 /** 资金共识分：与涨停板一起缓存，供推荐与接口复用 */
 let consensusCache: { at: number; map: Map<string, CapitalConsensus> } | null = null
+
+/**
+ * 板块趋势映射（板块名 -> 趋势）。
+ * 依据：近 66 个交易日验证，板块升温样本打板均收益 +1.49%（胜率 55.5%），
+ * 退潮样本 +0.94%（胜率 51.2%），因此升温 +6%、退潮 -8%。
+ */
+function currentSectorTrends(): Map<string, { trend: string; deltaPct: number }> {
+  try {
+    const file = loadSectorHistory()
+    if (!file) return new Map()
+    const map = new Map<string, { trend: string; deltaPct: number }>()
+    for (const item of computeSectorTrends(file, { limit: 200 })) {
+      map.set(item.name, { trend: item.trend, deltaPct: item.deltaPct })
+    }
+    return map
+  } catch {
+    return new Map()
+  }
+}
 
 function currentConsensus(): Map<string, CapitalConsensus> {
   if (consensusCache && Date.now() - consensusCache.at < 10 * 60_000) return consensusCache.map
@@ -540,6 +563,29 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+        // ---- 板块轮动（资金往哪切） ----
+        if (path === '/api/sectors/rotation') {
+          const file = loadSectorHistory()
+          if (!file) {
+            sendJson(res, 200, { cached: false, items: [], error: '尚未生成板块序列，先调用 POST /api/limit-up/backtest 重算历史' })
+            return
+          }
+          sendJson(res, 200, {
+            cached: true,
+            date: file.dates.at(-1),
+            datePrev: file.dates.at(-2),
+            items: computeSectorRotation(file, { limit: Number(url.searchParams.get('limit')) || 30 }),
+          })
+          return
+        }
+
+        // ---- 板块趋势 × 次日溢价验证 ----
+        if (path === '/api/sectors/backtest') {
+          const cached = loadSectorTrendBacktest()
+          sendJson(res, 200, cached ?? { cached: false, error: '尚未生成，先调用 POST /api/limit-up/backtest 重算历史' })
+          return
+        }
+
         // ---- 板块内补涨池 ----
         if (path === '/api/sectors/pool') {
           const sector = (url.searchParams.get('sector') ?? '').trim()
@@ -598,14 +644,28 @@ export function marketDataPlugin(): Plugin {
               const stocks = service.stocksWithIndustry()
               const nameMap = new Map(stocks.map((stock) => [stock.code, stock.name]))
               const started = Date.now()
-              const { pools, universe } = await rebuildDailyPools({ nameOf: (code) => nameMap.get(code) })
+              const metaMap = new Map(stocks.map((stock) => [stock.code, { industry: stock.industry, concepts: stock.concepts }]))
+              const { pools, universe, sectorDays } = await rebuildDailyPools({
+                nameOf: (code) => nameMap.get(code),
+                metaOf: (code) => metaMap.get(code) ?? { industry: undefined, concepts: [] },
+              })
               const result = backtestLimitUpPools(pools, { universe })
               saveLimitUpBacktest(result)
-              // 同步产出板块历史序列（近 66 个交易日），供板块趋势使用
-              const metaMap = new Map(stocks.map((stock) => [stock.code, { industry: stock.industry, concepts: stock.concepts }]))
-              saveSectorHistory(
-                buildSectorSeries(pools, (code) => metaMap.get(code) ?? { industry: undefined, concepts: [] }),
+              // 板块历史序列 + 板块趋势 × 次日溢价的验证
+              const sectorHistory = buildSectorSeries(
+                pools,
+                (code) => metaMap.get(code) ?? { industry: undefined, concepts: [] },
+                { sectorDays },
               )
+              saveSectorHistory(sectorHistory)
+              const sectorKeysOf = new Map(stocks.map((stock) => [
+                stock.code,
+                [
+                  ...(stock.industry ? ['industry:' + stock.industry] : []),
+                  ...(stock.concepts ?? []).map((concept) => 'concept:' + concept),
+                ],
+              ]))
+              saveSectorTrendBacktest(backtestSectorTrend(pools, sectorHistory, { sectorKeysOf }))
               console.log(
                 '[limit-up] 历史重算完成：' + result.startDate + ' ~ ' + result.endDate +
                 '（' + result.tradingDays + ' 个交易日）用时 ' + ((Date.now() - started) / 1000).toFixed(1) + 's',
@@ -632,7 +692,7 @@ export function marketDataPlugin(): Plugin {
             const consensus = currentConsensus()
             const result = buildTodayRecommendations(
               service.stocksWithIndustry(),
-              board ? { board, consensus } : { consensus },
+              board ? { board, consensus, sectorTrends: currentSectorTrends() } : { consensus },
             )
             sendJson(res, 200, result)
           } catch (e) {

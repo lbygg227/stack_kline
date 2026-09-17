@@ -1275,6 +1275,51 @@ export interface SectorTrend {
   series: number[]
 }
 
+export interface SectorRotationItem {
+  name: string
+  type: 'industry' | 'concept'
+  todayChangePct: number
+  change5d: number
+  amountYi: number
+  amountAvg5: number
+  amountRatio: number
+  count: number
+  countDelta: number
+  rank: number
+  rankYesterday: number
+  rankDelta: number
+  upRatio: number
+  score: number
+}
+
+export interface SectorRotationResponse {
+  cached: boolean
+  date?: string
+  datePrev?: string
+  items: SectorRotationItem[]
+  error?: string
+}
+
+export interface SectorTrendBacktest {
+  generatedAt: number
+  startDate: string
+  endDate: string
+  samples: number
+  bySectorTrend: SectorBucketStat[]
+  bySectorCount: SectorBucketStat[]
+  byLeader: SectorBucketStat[]
+  conclusion: string[]
+}
+
+export interface SectorBucketStat {
+  bucket: string
+  samples: number
+  winRate: number
+  averageNextChange: number
+  medianNextChange: number
+  averageHold3FromClose: number
+}
+
 export interface SectorTrendsResponse {
   cached: boolean
   startDate?: string

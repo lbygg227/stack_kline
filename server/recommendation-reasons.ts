@@ -262,6 +262,9 @@ export function boardReasons(item: {
   sectorFirstSealAt?: string
   sectorMainNetInflowYi?: number
   sectorHeat?: number
+  /** 板块趋势与变化幅度 */
+  sectorTrend?: string
+  sectorTrendDeltaPct?: number
   sentimentPhase?: string
   sentimentScore?: number
 }): RecommendationReason[] {
@@ -310,16 +313,18 @@ export function boardReasons(item: {
         (ladderText ? '（' + ladderText + '）' : '') +
         (item.sectorFirstSealAt ? '，最早 ' + item.sectorFirstSealAt + ' 封板' : '') +
         (typeof item.sectorMainNetInflowYi === 'number' ? '，板块主力净流入 ' + item.sectorMainNetInflowYi.toFixed(2) + '亿' : '') +
-        (item.isSectorLeader ? '；本股为板块内辨识度第一' : '；本股为跟随标的'),
+        (item.isSectorLeader ? '；本股为板块内辨识度第一' : '；本股为跟随标的') +
+        (item.sectorTrend ? '；板块趋势' + item.sectorTrend + '（' + (item.sectorTrendDeltaPct ?? 0) + '%）' : ''),
       weight: 0.3,
       strength: Math.max(30, Math.min(92, 35 + (item.topSectorCount ?? 0) * 6 + (item.isSectorLeader ? 12 : 0) + Math.min(10, (item.sectorHeat ?? 0) / 10))),
       metrics: {
         sector: item.topSector,
         sectorLimitUpCount: item.topSectorCount ?? 0,
         sectorHeat: item.sectorHeat ?? 0,
+        sectorTrend: item.sectorTrend ?? '未知',
         isLeader: item.isSectorLeader ? 'yes' : 'no',
       },
-      expect: '板块效应成立 → 板块 3 日内仍有涨停家数，本股不弱于板块中位',
+      expect: '板块效应成立 → 板块 3 日内仍有涨停家数，本股不弱于板块中位（历史验证：升温板块打板均收益 +1.49%、退潮 +0.94%）',
     })
   }
   if (item.sentimentPhase) {

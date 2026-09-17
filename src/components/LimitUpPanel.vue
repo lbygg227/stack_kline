@@ -1,13 +1,22 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { fetchLimitUpBacktest, fetchLimitUpBoard, fetchSectorTrends, rebuildLimitUpBacktest } from '../api'
+import {
+  fetchLimitUpBacktest,
+  fetchLimitUpBoard,
+  fetchSectorRotation,
+  fetchSectorTrendBacktest,
+  fetchSectorTrends,
+  rebuildLimitUpBacktest,
+} from '../api'
 import SectorDetailDrawer from './SectorDetailDrawer.vue'
 import type {
   BoardStat,
   LimitUpBacktest,
   LimitUpBoard,
   LimitUpItem,
+  SectorRotationItem,
   SectorTrend,
+  SectorTrendBacktest,
   SentimentPhase,
 } from '../types'
 import MarketBadge from './MarketBadge.vue'
@@ -25,6 +34,10 @@ const sectorDetail = ref<{ name: string; type: 'concept' | 'industry' } | null>(
 const sectorTrends = ref<SectorTrend[]>([])
 const trendLoading = ref(false)
 const trendFilter = ref<'升温' | '退潮' | '全部'>('升温')
+const rotation = ref<SectorRotationItem[]>([])
+const rotationDate = ref('')
+const rotationDatePrev = ref('')
+const sectorBacktest = ref<SectorTrendBacktest | null>(null)
 const backtest = ref<LimitUpBacktest | null>(null)
 const backtestLoading = ref(false)
 const backtestMode = ref<'executable' | 'all'>('executable')
@@ -111,8 +124,16 @@ const visibleTrends = computed(() =>
 async function loadTrends() {
   trendLoading.value = true
   try {
-    const res = await fetchSectorTrends(120)
-    sectorTrends.value = res.trends ?? []
+    const [trendRes, rotationRes, backtestRes] = await Promise.all([
+      fetchSectorTrends(120),
+      fetchSectorRotation(24).catch(() => null),
+      fetchSectorTrendBacktest().catch(() => null),
+    ])
+    sectorTrends.value = trendRes.trends ?? []
+    rotation.value = rotationRes?.items ?? []
+    rotationDate.value = rotationRes?.date ?? ''
+    rotationDatePrev.value = rotationRes?.datePrev ?? ''
+    sectorBacktest.value = backtestRes
   } catch {
     sectorTrends.value = []
   } finally {
@@ -296,6 +317,70 @@ onMounted(() => {
         <p class="lu-bt-meta">
           近 20 个交易日涨停家数序列（3 日均 vs 前 3 日均）；点击任意板块查看补涨池、涨停梯队与趋势详情。
         </p>
+
+        <div v-if="sectorBacktest" class="lu-verify">
+          <h4>板块趋势 × 次日溢价验证（{{ sectorBacktest.startDate }} ~ {{ sectorBacktest.endDate }}，样本 {{ sectorBacktest.samples }}）</h4>
+          <div class="lu-verify-cols">
+            <table class="lu-table">
+              <thead><tr><th>板块趋势</th><th class="num">样本</th><th class="num">胜率</th><th class="num">打板均收益</th><th class="num">持有3日</th></tr></thead>
+              <tbody>
+                <tr v-for="row in sectorBacktest.bySectorTrend" :key="row.bucket">
+                  <td>{{ row.bucket }}</td>
+                  <td class="num">{{ row.samples }}</td>
+                  <td class="num">{{ row.winRate }}%</td>
+                  <td class="num" :class="row.averageNextChange >= 0 ? 'up' : 'down'">{{ row.averageNextChange }}%</td>
+                  <td class="num" :class="row.averageHold3FromClose >= 0 ? 'up' : 'down'">{{ row.averageHold3FromClose }}%</td>
+                </tr>
+              </tbody>
+            </table>
+            <table class="lu-table">
+              <thead><tr><th>板块涨停家数</th><th class="num">样本</th><th class="num">胜率</th><th class="num">打板均收益</th><th class="num">持有3日</th></tr></thead>
+              <tbody>
+                <tr v-for="row in sectorBacktest.bySectorCount" :key="row.bucket">
+                  <td>{{ row.bucket }}</td>
+                  <td class="num">{{ row.samples }}</td>
+                  <td class="num">{{ row.winRate }}%</td>
+                  <td class="num" :class="row.averageNextChange >= 0 ? 'up' : 'down'">{{ row.averageNextChange }}%</td>
+                  <td class="num" :class="row.averageHold3FromClose >= 0 ? 'up' : 'down'">{{ row.averageHold3FromClose }}%</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <ul class="lu-notes">
+            <li v-for="(line, i) in sectorBacktest.conclusion" :key="i">{{ line }}</li>
+          </ul>
+        </div>
+
+        <h4 class="lu-section-title">
+          板块轮动（资金往哪切）
+          <span v-if="rotationDate" class="lu-section-hint">{{ rotationDate }} vs {{ rotationDatePrev }} · 按成交量取全市场板块</span>
+        </h4>
+        <table class="lu-table">
+          <thead>
+            <tr>
+              <th>板块</th><th class="num">轮动分</th><th class="num">今日涨幅</th><th class="num">5日累计</th>
+              <th class="num">成交额</th><th class="num">较5日均</th><th class="num">涨幅排名</th><th class="num">排名变化</th>
+              <th class="num">涨停家数</th><th class="num">上涨占比</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="item in rotation" :key="item.type + item.name" class="sector-row" @click="sectorDetail = { name: item.name, type: item.type }">
+              <td class="sector-name-cell">{{ item.name }}</td>
+              <td class="num"><b :class="item.score >= 60 ? 'up' : ''">{{ item.score }}</b></td>
+              <td class="num" :class="item.todayChangePct >= 0 ? 'up' : 'down'">{{ item.todayChangePct }}%</td>
+              <td class="num" :class="item.change5d >= 0 ? 'up' : 'down'">{{ item.change5d }}%</td>
+              <td class="num">{{ item.amountYi }}亿</td>
+              <td class="num">{{ item.amountRatio }}x</td>
+              <td class="num">第 {{ item.rank }} 名</td>
+              <td class="num" :class="item.rankDelta > 0 ? 'up' : item.rankDelta < 0 ? 'down' : ''">
+                {{ item.rankDelta > 0 ? '↑' + item.rankDelta : item.rankDelta < 0 ? '↓' + Math.abs(item.rankDelta) : '—' }}
+              </td>
+              <td class="num">{{ item.count }}<span v-if="item.countDelta" :class="item.countDelta > 0 ? 'up' : 'down'"> ({{ item.countDelta > 0 ? '+' : '' }}{{ item.countDelta }})</span></td>
+              <td class="num">{{ item.upRatio }}%</td>
+            </tr>
+            <tr v-if="!rotation.length"><td colspan="10" class="lu-empty-cell">暂无轮动数据</td></tr>
+          </tbody>
+        </table>
         <table class="lu-table">
           <thead>
             <tr>
@@ -524,6 +609,11 @@ onMounted(() => {
 .lu-table th, .lu-table td { padding: 5px 8px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
 .lu-table .num { text-align: right; }
 .lu-table th { color: var(--text-3); font-weight: 600; }
+.lu-verify { margin: 10px 0 14px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
+.lu-verify h4 { margin: 0 0 6px; font-size: 12px; }
+.lu-verify-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.lu-section-title { margin: 14px 0 6px; font-size: 13px; }
+.lu-section-hint { margin-left: 8px; font-size: 10px; font-weight: 400; color: var(--text-3); }
 .lu-bt-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .lu-bt-meta { margin: 0 0 10px; font-size: 12px; color: var(--text-3); }
 .lu-bt-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
@@ -545,6 +635,6 @@ onMounted(() => {
   .lu-head { flex-direction: column; padding: 12px 14px 8px; }
   .lu-sentiment { margin: 6px 14px 0; }
   .lu-tabs, .lu-body, .lu-history { padding-left: 14px; padding-right: 14px; }
-  .lu-split, .lu-bt-tables { grid-template-columns: 1fr; }
+  .lu-split, .lu-bt-tables, .lu-verify-cols { grid-template-columns: 1fr; }
 }
 </style>

@@ -139,6 +139,9 @@ export interface RecommendationRecord {
     sectorLadder?: Record<string, number>
     sectorFirstSealAt?: string
     sectorMainNetInflowYi?: number
+    /** 板块趋势：升温 / 持平 / 退潮（近 66 个交易日序列判定） */
+    sectorTrend?: string
+    sectorTrendDeltaPct?: number
   }
 }
 
@@ -539,6 +542,7 @@ function buildBoardRecords(
   stocks: SnapshotStock[],
   board: LimitUpBoard,
   consensus?: Map<string, CapitalConsensus>,
+  sectorTrends?: Map<string, { trend: string; deltaPct: number }>,
 ): RecommendationRecord[] {
   const records: RecommendationRecord[] = []
   const stockMap = new Map(stocks.map((stock) => [stock.code.toLowerCase(), stock]))
@@ -560,6 +564,9 @@ function buildBoardRecords(
     const agree = consensus?.get(item.code)
     // 本股所属板块的完整信息（热度/梯队/资金），用于把「板块效应」写进推荐理由
     const topSectorInfo = board.sectors.find((sector) => sector.name === item.topSector)
+    // 板块趋势乘数：历史验证「升温板块打板均收益 +1.49% vs 退潮 +0.94%」
+    const trendInfo = item.topSector ? sectorTrends?.get(item.topSector) : undefined
+    const trendMultiplier = trendInfo?.trend === '升温' ? 1.06 : trendInfo?.trend === '退潮' ? 0.92 : 1
     const reasonText = (isLeader
       ? '板块龙头：' + item.board + ' 连板，' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停'
       : '板块效应打板：' + (item.topSector ?? '') + ' 板块 ' + sectorTier + ' 家涨停，本股今日涨停') +
@@ -571,8 +578,8 @@ function buildBoardRecords(
       style,
       channel: 'board',
       thesis: reasonText,
-      // 共识分本身已含「广度」加成，这里直接取两者较大值，避免重复加成
-      score: Math.max(45, Math.min(98, Math.round(Math.max(item.recognition, agree?.score ?? 0)))),
+      // 共识分本身已含「广度」加成，这里直接取两者较大值，避免重复加成；再乘板块趋势
+      score: Math.max(40, Math.min(98, Math.round(Math.max(item.recognition, agree?.score ?? 0) * trendMultiplier))),
       evidence: [
         item.board > 1 ? item.board + ' 连板' : '首板',
         (item.firstSealAt ? item.firstSealAt + ' 封板' : '封板时间未知') + (item.breakCount ? '，炸板 ' + item.breakCount + ' 次' : ''),
@@ -596,6 +603,8 @@ function buildBoardRecords(
           sectorFirstSealAt: topSectorInfo?.firstSealAt,
           sectorMainNetInflowYi: topSectorInfo ? Number((topSectorInfo.mainNetInflow / 1e8).toFixed(2)) : undefined,
           sectorHeat: topSectorInfo?.heat,
+          sectorTrend: trendInfo?.trend,
+          sectorTrendDeltaPct: trendInfo?.deltaPct,
           ...sentimentBase,
         }),
         ...(agree && agree.lineCount >= 2 ? [consensusReason(agree)] : []),
@@ -615,6 +624,8 @@ function buildBoardRecords(
         sectorLadder: topSectorInfo?.ladder,
         sectorFirstSealAt: topSectorInfo?.firstSealAt,
         sectorMainNetInflowYi: topSectorInfo ? Number((topSectorInfo.mainNetInflow / 1e8).toFixed(2)) : undefined,
+        sectorTrend: trendInfo?.trend,
+        sectorTrendDeltaPct: trendInfo?.deltaPct,
       },
     }))
   }
@@ -792,7 +803,12 @@ function averageDimensionWeight(item: RecommendationRecord, dimensionWeights: Re
 
 export function buildTodayRecommendations(
   stocks: SnapshotStock[],
-  options: { coolingDays?: number; board?: LimitUpBoard; consensus?: Map<string, CapitalConsensus> } = {},
+  options: {
+    coolingDays?: number
+    board?: LimitUpBoard
+    consensus?: Map<string, CapitalConsensus>
+    sectorTrends?: Map<string, { trend: string; deltaPct: number }>
+  } = {},
 ): RecommendationListResponse {
   const all = [
     ...buildTechnicalRecords(stocks),
@@ -800,7 +816,7 @@ export function buildTodayRecommendations(
     ...buildOpinionRecords(stocks),
     ...buildFundRecords(),
     ...buildDragonRecords(),
-    ...(options.board ? buildBoardRecords(stocks, options.board, options.consensus) : []),
+    ...(options.board ? buildBoardRecords(stocks, options.board, options.consensus, options.sectorTrends) : []),
   ]
   const byCode = new Map<string, RecommendationRecord>()
   for (const item of all) {
