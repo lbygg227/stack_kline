@@ -14,6 +14,8 @@ import { buildTodayRecommendations, type RecommendationListResponse } from './re
 import { getConfidenceScale, getRecommendationWeightState, getTargetFactor } from './recommendation-weights.ts'
 import { getReasonGuard } from './recommendation-guard.ts'
 import type { SnapshotStock } from './eastmoney.ts'
+import { computeSectorRotation, computeSectorTrends, loadSectorHistory } from './limit-up-history.ts'
+import { loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 
 const LATEST_FILE = 'daily-digest.json'
 const HISTORY_FILE = 'digest-history.json'
@@ -79,10 +81,13 @@ export async function buildDailyDigest(input: {
   stocks: SnapshotStock[]
   loadBars: (code: string) => Promise<KLineBar[]>
   recommendations?: RecommendationListResponse
+  /** 涨停板快照：用于补齐情绪相位与热点板块（日报首段的板块信息依赖它） */
+  board?: LimitUpBoard | null
   date?: string
   push?: boolean
 }): Promise<DailyDigest> {
-  const recommendations = input.recommendations ?? buildTodayRecommendations(input.stocks)
+  const board = input.board ?? loadBoardSnapshot()
+  const recommendations = input.recommendations ?? buildTodayRecommendations(input.stocks, board ? { board } : {})
   const date = input.date ?? recommendations.items[0]?.signalDate ?? todayString()
   const attribution = await buildRecommendationAttribution(input.loadBars, { limit: 300 })
   const guard = getReasonGuard()
@@ -104,6 +109,83 @@ export async function buildDailyDigest(input: {
       ],
     })
   }
+
+  // 板块热度：先给「今天钱在往哪切」，再给推荐
+  const sentiment = recommendations.sentiment
+  const hotSectors = recommendations.hotSectors ?? []
+  const sectorFile = loadSectorHistory()
+  const trends = sectorFile ? computeSectorTrends(sectorFile, { limit: 200 }) : []
+  const rising = sectorFile ? computeSectorRotation(sectorFile, { limit: 200 }) : []
+  const sectorLines: string[] = []
+  if (sentiment) {
+    sectorLines.push(
+      '情绪相位「' + sentiment.phase + '」（评分 ' + sentiment.score + '，涨停板口径）：涨停 ' + sentiment.limitUpCount +
+      ' / 跌停 ' + sentiment.limitDownCount + '，炸板率 ' + sentiment.brokenRate + '%，最高 ' + sentiment.maxBoard + ' 板' +
+      (sentiment.yesterdayPremium ? '，昨日涨停今日 ' + fmtPct(sentiment.yesterdayPremium) : '') +
+      (sentiment.promotionRate ? '，晋级率 ' + sentiment.promotionRate + '%' : ''),
+    )
+  }
+  if (hotSectors.length) {
+    sectorLines.push(
+      '最热板块：' + hotSectors.slice(0, 3).map((sector) =>
+        sector.name + '（热度 ' + sector.heat + '，' + sector.limitUpCount + ' 家涨停，最高 ' + sector.maxBoard + ' 板，龙头 ' + sector.leaderName + '）',
+      ).join('；'),
+    )
+  }
+  const risingTrends = trends.filter((item) => item.trend === '升温').slice(0, 3)
+  if (risingTrends.length) {
+    sectorLines.push(
+      '升温板块（涨停家数）：' + risingTrends.map((item) =>
+        item.name + '（' + item.stage + '，3 日均 ' + item.avgRecent + ' 家 vs 前 3 日均 ' + item.avgPrevious + ' 家，' +
+        fmtPct(item.deltaPct) + '，板块 5 日 ' + fmtPct(item.change5d) + '）',
+      ).join('；'),
+    )
+  }
+  const freshTrends = trends.filter((item) => item.stage === '刚启动').slice(0, 3)
+  if (freshTrends.length) {
+    sectorLines.push(
+      '刚启动（可跟）：' + freshTrends.map((item) =>
+        item.name + '（今日 ' + item.today + ' 家涨停，5 日 ' + fmtPct(item.change5d) + '）',
+      ).join('；'),
+    )
+  }
+  const highTrends = trends.filter((item) => item.stage === '高位').slice(0, 3)
+  if (highTrends.length) {
+    sectorLines.push(
+      '已在高位（谨慎追）：' + highTrends.map((item) =>
+        item.name + '（连续 ' + item.streak + ' 日，5 日 ' + fmtPct(item.change5d) + '）',
+      ).join('；'),
+    )
+  }
+  const fadingTrends = trends.filter((item) => item.trend === '退潮').slice(0, 2)
+  if (fadingTrends.length) {
+    sectorLines.push(
+      '退潮板块（涨停家数）：' + fadingTrends.map((item) =>
+        item.name + '（' + fmtPct(item.deltaPct) + '，板块 5 日 ' + fmtPct(item.change5d) + '）',
+      ).join('；'),
+    )
+  }
+  const rotationTop = rising.filter((item) => item.type === 'concept').slice(0, 3)
+  if (rotationTop.length) {
+    sectorLines.push(
+      '资金切入（轮动榜）：' + rotationTop.map((item) =>
+        item.name + '（轮动分 ' + item.score + '，今日 ' + fmtPct(item.todayChangePct) +
+        '，排名 ' + item.rankYesterday + '→' + item.rank + '）',
+      ).join('；'),
+    )
+  }
+  const rotationBottom = rising
+    .filter((item) => item.type === 'concept' && item.rankDelta < 0)
+    .sort((a, b) => a.rankDelta - b.rankDelta)
+    .slice(0, 3)
+  if (rotationBottom.length) {
+    sectorLines.push(
+      '排名下滑（相对走弱）：' + rotationBottom.map((item) =>
+        item.name + '（今日 ' + fmtPct(item.todayChangePct) + '，排名 ' + item.rankYesterday + '→' + item.rank + '）',
+      ).join('；'),
+    )
+  }
+  if (sectorLines.length) sections.push({ title: '板块热度与轮动', lines: sectorLines })
 
   sections.push({
     title: '今日推荐 TOP ' + Math.min(8, recommendations.items.length),
