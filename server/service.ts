@@ -25,6 +25,7 @@ import {
 import { fetchTencentQuotes, type Quote } from './tencent-quote.ts'
 import { buildIndustryMap, loadIndustryMap, type IndustryMap } from './industry.ts'
 import { createScheduler, type UpdateTaskName } from './scheduler.ts'
+import { expectedTradingDate, marketDataDateFromCache, REFERENCE_CODES } from './data-health.ts'
 
 initNetwork()
 
@@ -343,7 +344,15 @@ const scheduler = createScheduler({
     await startPrefetch('day')
     return { detail: `日K预取 ${prefetch.done}/${prefetch.total}（失败 ${prefetch.failed}）` }
   },
-} satisfies Record<UpdateTaskName, () => Promise<{ detail: string }>>)
+} satisfies Record<UpdateTaskName, () => Promise<{ detail: string }>>, {
+  // 数据落后时补跑（周末/节假日也能触发）：比较本地日线尾部与数据源给出的最近已收盘交易日
+  needsCatchUp: async () => {
+    const expected = await expectedTradingDate().catch(() => undefined)
+    if (!expected) return false
+    const local = marketDataDateFromCache(REFERENCE_CODES)
+    return Boolean(local && local < expected)
+  },
+})
 
 /* ============ 导出 ============ */
 

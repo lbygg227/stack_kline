@@ -606,6 +606,9 @@ export async function buildLimitUpBoardFull(
   stocks: SnapshotStock[],
   loaders: BoardLoaders,
   now = Date.now(),
+  /** 数据所属交易日（由数据源推导）。看板日期必须跟数据走，
+   *  否则周六会算出「09-19 的涨停板」这种并不存在的交易日 */
+  options: { dataDate?: string } = {},
 ): Promise<LimitUpBoard> {
   const prelim = buildLimitUpBoard(stocks, { now })
   const boardCounts = new Map<string, number>()
@@ -640,6 +643,7 @@ export async function buildLimitUpBoardFull(
   }
 
   const board = buildLimitUpBoard(stocks, { boardCounts, sealInfo, now })
+  if (options.dataDate) board.date = options.dataDate
   board.sentiment = computeSentiment({
     board,
     stocks,

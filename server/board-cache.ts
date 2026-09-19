@@ -65,10 +65,12 @@ export function resolveBoard(input: {
   snapshot: LimitUpBoard | null
   now?: number
   ttlMs?: number
+  /** 期望的数据交易日（优先由数据源推导，缺省按星期推算） */
+  expectedDate?: string
 }): BoardResolution {
   const now = input.now ?? Date.now()
   const ttl = input.ttlMs ?? BOARD_TTL_MS
-  const expected = expectedBoardDate(now)
+  const expected = input.expectedDate || expectedBoardDate(now)
   const memory = input.memory
   if (memory && memory.board.date === expected && now - memory.at < ttl) {
     return { board: memory.board, current: true, fresh: true, adopt: false, needsRefresh: false }

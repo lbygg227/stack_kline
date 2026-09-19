@@ -1281,3 +1281,35 @@ export async function fetchFocusStats(): Promise<import('../types').FocusStats> 
   const data = (await res.json()) as { stats: import('../types').FocusStats }
   return data.stats
 }
+export interface DataHealthItem {
+  key: string
+  label: string
+  level: 'ok' | 'warn' | 'error'
+  value: string
+  expected?: string
+  lagDays?: number
+  action?: string
+}
+
+export interface DataHealthReport {
+  checkedAt: number
+  expectedTradingDate?: string
+  level: 'ok' | 'warn' | 'error'
+  items: DataHealthItem[]
+  needsCatchUp: boolean
+}
+
+export async function fetchDataHealth(): Promise<DataHealthReport> {
+  const res = await fetch('/api/data-health')
+  if (!res.ok) throw new Error('data health http ' + res.status)
+  return (await res.json()) as DataHealthReport
+}
+
+export async function fixData(scope: 'all' | 'snapshot' | 'sectors' = 'all'): Promise<void> {
+  const res = await fetch('/api/data-health/fix', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scope }),
+  })
+  if (!res.ok) throw new Error('data fix http ' + res.status)
+}

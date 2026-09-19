@@ -17,6 +17,7 @@ import SimulationPanel from './components/SimulationPanel.vue'
 import DailyDigest from './components/DailyDigest.vue'
 import LimitUpPanel from './components/LimitUpPanel.vue'
 import ThesisDesk from './components/ThesisDesk.vue'
+import DataHealthBanner from './components/DataHealthBanner.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -96,6 +97,7 @@ onBeforeUnmount(() => {
 <template>
   <div class="app">
     <TopBar />
+    <DataHealthBanner />
 
     <!-- 移动端：底部导航单页切换 -->
     <template v-if="isMobile">

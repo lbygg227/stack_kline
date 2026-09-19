@@ -139,6 +139,7 @@ import {
   tradingDatesOf,
 } from './history-backfill.ts'
 import { focusStats, loadFocusPicks, recordFocusPicks, settleFocusPicks } from './focus-tracking.ts'
+import { expectedTradingDate, inspectDataHealth } from './data-health.ts'
 import {
   backtestLimitUpPools,
   backtestSectorTrend,
@@ -247,6 +248,58 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 /** 涨停板当日缓存：构建一次需要日K回溯 + 分时（约 20s），不随请求重复计算 */
 let limitUpCache: { at: number; board: LimitUpBoard } | null = null
 
+/**
+ * 当前数据所属交易日：以数据源（TickFlow 指数日线）为准，而不是机器时钟。
+ * 周末/节假日时钟会给出一个并不存在的交易日（例如周六算出「09-19 的涨停板」），
+ * 导致看板日期、板块滞后判断、复盘日期全部错位。
+ * 15 分钟记忆化，失败时回落到「按星期推算」。
+ */
+let dataDateCache: { at: number; date: string } | null = null
+async function currentDataDate(): Promise<string> {
+  if (dataDateCache && Date.now() - dataDateCache.at < 15 * 60_000) return dataDateCache.date
+  const date = await expectedTradingDate()
+  if (date) {
+    dataDateCache = { at: Date.now(), date }
+    return date
+  }
+  const fallback = expectedBoardDate()
+  dataDateCache = { at: Date.now(), date: fallback }
+  return fallback
+}
+
+/** 后台重算板块序列与板块回测（依赖全量日线，约 1 分钟） */
+let sectorRebuild: Promise<void> | null = null
+async function rebuildSectorsInBackground(): Promise<void> {
+  if (sectorRebuild) return sectorRebuild
+  sectorRebuild = (async () => {
+    try {
+      const stocks = service.stocksWithIndustry()
+      const nameMap = new Map(stocks.map((stock) => [stock.code, stock.name]))
+      const metaMap = new Map(stocks.map((stock) => [stock.code, { industry: stock.industry, concepts: stock.concepts }]))
+      const { pools, universe, sectorDays } = await rebuildDailyPools({
+        nameOf: (code) => nameMap.get(code),
+        metaOf: (code) => metaMap.get(code) ?? { industry: undefined, concepts: [] },
+      })
+      const result = backtestLimitUpPools(pools, { universe })
+      saveLimitUpBacktest(result)
+      const sectorHistory = buildSectorSeries(pools, (code) => metaMap.get(code) ?? { industry: undefined, concepts: [] }, { sectorDays })
+      saveSectorHistory(sectorHistory)
+      saveSectorTrendBacktest(backtestSectorTrend(pools, sectorHistory, {
+        sectorKeysOf: new Map([...metaMap.entries()].map(([code, meta]) => [
+          code,
+          [meta.industry, ...(meta.concepts ?? [])].filter((name): name is string => Boolean(name)).map((name) => 'concept:' + name).concat(meta.industry ? ['industry:' + meta.industry] : []),
+        ])),
+      }))
+      console.log('[sectors] 板块序列与回测已重算至 ' + sectorHistory.endDate)
+    } catch (e) {
+      console.warn('[sectors] 后台重算失败：', e instanceof Error ? e.message : e)
+    } finally {
+      sectorRebuild = null
+    }
+  })()
+  return sectorRebuild
+}
+
 /** 只读本地日线缓存（不触发网络请求），用于给推荐补买入时机与历史回测 */
 function loadCachedKline(code: string): KLineBar[] {
   const cached = readJson<{ bars?: KLineBar[] }>(`kline-cache/${code}_day.json`)
@@ -296,7 +349,7 @@ async function refreshLimitUpBoard(withIntraday: boolean): Promise<LimitUpBoard>
       ? (code) => getKlineWithCache(code, 'm1', 240)
       : undefined,
     intradayLimit: 40,
-  })
+  }, Date.now(), { dataDate: await currentDataDate() })
   limitUpCache = { at: Date.now(), board }
   console.log(
     '[limit-up] ' + board.date + ' 涨停 ' + board.limitUp.length + ' / 跌停 ' + board.limitDown.length +
@@ -314,9 +367,10 @@ async function refreshLimitUpBoard(withIntraday: boolean): Promise<LimitUpBoard>
  */
 function currentLimitUpBoard(): LimitUpBoard | null {
   const now = Date.now()
+  const expected = dataDateCache?.date ?? expectedBoardDate(now)
   const memory = limitUpCache
-  if (memory && memory.board.date === expectedBoardDate(now) && now - memory.at < BOARD_TTL_MS) return memory.board
-  const resolved = resolveBoard({ memory, snapshot: loadBoardSnapshot(), now })
+  if (memory && memory.board.date === expected && now - memory.at < BOARD_TTL_MS) return memory.board
+  const resolved = resolveBoard({ memory, snapshot: loadBoardSnapshot(), now, expectedDate: expected })
   if (resolved.adopt && resolved.board) limitUpCache = { at: now, board: resolved.board }
   if (resolved.needsRefresh) scheduleBoardRefresh()
   return resolved.board
@@ -740,6 +794,58 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+
+        // ---- 数据健康自检 ----
+        if (path === '/api/data-health') {
+          try {
+            const expected = await expectedTradingDate()
+            const snapshotFile = readJson<{ fetchedAt?: number; stocks?: unknown[] }>('market-snapshot.json')
+            const sector = loadSectorHistory()
+            const fundRank = readJson<{ updatedAt?: number }>('fund-flow-rank.json')
+            const dragonRank = readJson<{ updatedAt?: number }>('dragon-tiger-rank.json')
+            const fundHistory = loadFundFlowHistory()
+            const lengths = Object.values(fundHistory.codes).map((days) => days.length).sort((a, b) => a - b)
+            const board = limitUpCache?.board ?? loadBoardSnapshot()
+            sendJson(res, 200, inspectDataHealth({
+              expected,
+              snapshotFetchedAt: snapshotFile?.fetchedAt,
+              snapshotCount: snapshotFile?.stocks?.length ?? 0,
+              boardDate: board?.date,
+              sectorEndDate: sector?.endDate,
+              fundRankUpdatedAt: fundRank?.updatedAt,
+              dragonRankUpdatedAt: dragonRank?.updatedAt,
+              fundHistoryCodes: lengths.length,
+              fundHistoryMedianDays: lengths.length ? lengths[Math.floor(lengths.length / 2)] : 0,
+            }))
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/data-health/fix' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { scope?: 'all' | 'snapshot' | 'sectors' }
+            const scope = body.scope ?? 'all'
+            if (scope === 'all' || scope === 'snapshot') void service.scheduler.runNow()
+            if (scope === 'all' || scope === 'sectors') {
+              void rebuildSectorsInBackground()
+            }
+            if (scope === 'all') {
+              // 当日资金流/龙虎榜榜单：这两个调度器同样只在交易日窗口运行，
+              // 错过就不再补，所以补数据时一并刷新（数据量小、各一次请求）
+              void refreshFundFlowRank({ stocks: service.stocksWithIndustry(), watchlist: [], topAmount: 400 })
+                .catch((e) => console.warn('[data-health] 资金流榜单刷新失败：', e instanceof Error ? e.message : e))
+              void refreshDragonTigerRank({ stocks: service.stocksWithIndustry() })
+                .catch((e) => console.warn('[data-health] 龙虎榜榜单刷新失败：', e instanceof Error ? e.message : e))
+            }
+            sendJson(res, 202, { ok: true, scope, message: '已触发后台补数据，可通过 /api/data-health 查看结果' })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
         // ---- 每日复盘摘要 ----
         if (path === '/api/digest') {
           sendJson(res, 200, {
@@ -1069,7 +1175,7 @@ export function marketDataPlugin(): Plugin {
               service.stocksWithIndustry(),
               board ? { board, consensus, sectorTrends: currentSectorTrends() } : { consensus },
             )
-            const expected = expectedBoardDate()
+            const expected = await currentDataDate()
             // 买入时机 + 个股历史回测：都给每条推荐附上（只读本地日线缓存，不发请求）
             const plans: Record<string, ReturnType<typeof buildEntryPlan>> = {}
             const backtests: Record<string, SignalBacktest> = {}

@@ -2173,3 +2173,20 @@ export interface FocusStats {
   byStyle: Array<{ style: string; samples: number; winRate: number; averageExcessPct: number }>
   note: string
 }
+export interface DataHealthItem {
+  key: string
+  label: string
+  level: 'ok' | 'warn' | 'error'
+  value: string
+  expected?: string
+  lagDays?: number
+  action?: string
+}
+
+export interface DataHealthReport {
+  checkedAt: number
+  expectedTradingDate?: string
+  level: 'ok' | 'warn' | 'error'
+  items: DataHealthItem[]
+  needsCatchUp: boolean
+}

@@ -41,13 +41,23 @@ export interface SchedulerStatus {
 
 type TaskRunner = () => Promise<{ detail: string }>
 
-export function createScheduler(taskRunners: Record<UpdateTaskName, TaskRunner>) {
+export interface SchedulerOptions {
+  /**
+   * 数据是否落后于最近一个已收盘交易日。
+   * 用途：调度器只在周一~周五到点运行，一旦某个时间点因重启/停机被错过，当天就永久跳过，
+   * 周末又不会补跑 —— 结果是数据静默落后好几天。非交易日 tick 时用这个回调判断是否需要补跑。
+   */
+  needsCatchUp?: () => Promise<boolean>
+}
+
+export function createScheduler(taskRunners: Record<UpdateTaskName, TaskRunner>, options: SchedulerOptions = {}) {
   const state = {
     running: false,
     lastRun: 0,
     lastResult: '尚未运行（dev server 启动后开始计时）',
     lastDay: '',
     ranKeys: new Set<string>(),
+    catchupChecking: false,
   }
 
   const localDay = (d: Date) =>
@@ -86,7 +96,24 @@ export function createScheduler(taskRunners: Record<UpdateTaskName, TaskRunner>)
       state.lastDay = day
       state.ranKeys.clear()
     }
-    if (!isTradingDay(now)) return
+    if (!isTradingDay(now)) {
+      // 非交易日（周末/节假日）：如果数据落后于最近一个已收盘交易日，补跑一次收盘计划
+      if (!state.ranKeys.has('catchup') && state.catchupChecking !== true && options.needsCatchUp) {
+        state.catchupChecking = true
+        void options.needsCatchUp()
+          .then((needed) => {
+            if (!needed) return
+            state.ranKeys.add('catchup')
+            return runPlan({ ...UPDATE_PLAN[UPDATE_PLAN.length - 1], key: 'catchup', label: '数据补跑（检测到数据落后）' })
+          })
+          .catch(() => null)
+          .finally(() => {
+            state.catchupChecking = false
+          })
+      }
+      return
+    }
+    state.catchupChecking = false
     for (const item of UPDATE_PLAN) {
       if (state.ranKeys.has(item.key)) continue
       const sched = new Date(now.getFullYear(), now.getMonth(), now.getDate(), item.hour, item.minute).getTime()
