@@ -124,6 +124,7 @@ import { discussThesis, phraseThesisReview, structureThesis } from './deepseek.t
 import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import { BOARD_TTL_MS, expectedBoardDate, inTradingWindow, resolveBoard } from './board-cache.ts'
+import { buildEntryPlan, normalizeBars } from './entry-plan.ts'
 import {
   backtestLimitUpPools,
   backtestSectorTrend,
@@ -987,8 +988,23 @@ export function marketDataPlugin(): Plugin {
               board ? { board, consensus, sectorTrends: currentSectorTrends() } : { consensus },
             )
             const expected = expectedBoardDate()
+            // 买入时机：给每条推荐附上可执行的入场计划（现价 / 回踩 MA10 / 确认式）
+            const plans: Record<string, ReturnType<typeof buildEntryPlan>> = {}
+            await Promise.all(result.items.slice(0, 60).map(async (item) => {
+              try {
+                const bars = normalizeBars(await getKlineWithCache(item.code, 'day', 200))
+                plans[item.code] = buildEntryPlan(bars, {
+                  style: item.style,
+                  stopLoss: item.levels?.stopLoss,
+                  target: item.levels?.target,
+                })
+              } catch {
+                /* 单只失败不影响整体 */
+              }
+            }))
             sendJson(res, 200, {
               ...result,
+              entryPlans: plans,
               boardDate: board?.date,
               boardStale: !board || board.date !== expected,
               boardExpectedDate: expected,

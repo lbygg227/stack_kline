@@ -1378,10 +1378,34 @@ export interface RecommendationBoardContext {
   sectorChange5d?: number
 }
 
+export type EntryPlanMode = 'now' | 'pullback' | 'confirm' | 'wait'
+
+export interface EntryPlan {
+  mode: EntryPlanMode
+  label: string
+  price?: number
+  trigger?: string
+  stopLoss?: number
+  note: string
+  metrics: {
+    ma5: number
+    ma10: number
+    ma20: number
+    price: number
+    biasMa20Pct: number
+    amp20Pct: number
+    volumeRatio5d: number
+    distanceToHigh60Pct: number
+    trendUp: boolean
+  }
+}
+
 export interface RecommendationListResponse {
   generatedAt: number
   total: number
   items: RecommendationRecord[]
+  /** 买入时机：code -> 入场计划 */
+  entryPlans?: Record<string, EntryPlan | null>
   /** 板块/涨停上下文的看板日期；落后时前端会明确提示 */
   boardDate?: string
   boardStale?: boolean

@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchRecommendations, fetchStockRecommendationHistory } from '../api'
 import type {
+  EntryPlanMode,
   RecommendationListResponse,
   RecommendationRecord,
   RecommendationStyle,
@@ -21,6 +22,14 @@ const showObserving = ref(false)
 const selectedSector = ref('')
 const sectorDetail = ref<{ name: string; type: 'concept' | 'industry' } | null>(null)
 const hotSectors = computed(() => data.value?.hotSectors ?? [])
+
+/** 买入时机标签：把入场计划的四种模式翻成人话 */
+const ENTRY_LABEL: Record<EntryPlanMode, string> = {
+  now: '可买',
+  pullback: '等回踩',
+  confirm: '等确认',
+  wait: '先观察',
+}
 
 /** 数据生成时间：把「新不新」直接摆在界面上，避免再靠感觉判断延迟 */
 const updatedAt = computed(() => {
@@ -363,6 +372,7 @@ onUnmounted(() => {
               <th class="num">目标</th>
               <th class="num">止损</th>
               <th class="num">周期</th>
+              <th>买入时机</th>
               <th>板块</th>
               <th>核心理由</th>
               <th>来源</th>
@@ -394,6 +404,17 @@ onUnmounted(() => {
               <td class="num">{{ fmt(item.levels.target) }}</td>
               <td class="num down">{{ fmt(item.levels.stopLoss) }}</td>
               <td class="num">{{ item.horizonDays }}日</td>
+              <td class="entry-cell">
+                <template v-if="data.entryPlans?.[item.code]">
+                  <span class="entry-tag" :class="'entry-' + data.entryPlans[item.code]!.mode">
+                    {{ ENTRY_LABEL[data.entryPlans[item.code]!.mode] }}
+                  </span>
+                  <span v-if="data.entryPlans[item.code]!.price" class="entry-price num">
+                    {{ fmt(data.entryPlans[item.code]!.price) }}
+                  </span>
+                </template>
+                <span v-else class="flat">—</span>
+              </td>
               <td class="sector-cell">
                 <template v-if="item.board?.topSector">
                   <span class="sector-name">{{ item.board.topSector }}</span>
@@ -619,6 +640,13 @@ onUnmounted(() => {
               <div class="level-row"><span>目标</span><b class="num up">{{ fmt(selected.levels.target) }}</b></div>
               <div class="level-row"><span>止损</span><b class="num down">{{ fmt(selected.levels.stopLoss) }}</b></div>
               <div class="level-row"><span>观察周期</span><b class="num">{{ selected.horizonDays }} 日</b></div>
+            <div v-if="data?.entryPlans?.[selected.code]" class="level-row">
+              <span>买入时机</span>
+              <b>{{ data.entryPlans[selected.code]!.label }}</b>
+            </div>
+            <div v-if="data?.entryPlans?.[selected.code]?.note" class="entry-note">
+              {{ data.entryPlans[selected.code]!.note }}
+            </div>
             </section>
 
             <section v-if="selected.invalidIf.length" class="drawer-section">
@@ -670,6 +698,14 @@ onUnmounted(() => {
 .today-state { padding: 50px 20px; text-align: center; color: var(--text-3); }
 
 .updated-at { margin-left: 8px; opacity: 0.6; }
+.entry-cell { white-space: nowrap; }
+.entry-tag { padding: 1px 6px; border-radius: 8px; font-size: 11px; border: 1px solid var(--border); }
+.entry-tag.entry-now { color: var(--up); border-color: var(--up); }
+.entry-tag.entry-pullback { color: #e08a2e; border-color: #e08a2e; }
+.entry-tag.entry-confirm { color: var(--primary); border-color: var(--primary); }
+.entry-tag.entry-wait { color: var(--text-3); }
+.entry-price { margin-left: 4px; font-size: 11px; color: var(--text-2); }
+.entry-note { margin: 4px 0 0; font-size: 11px; line-height: 1.6; color: var(--text-3); }
 .board-date { margin-left: auto; opacity: 0.75; }
 .board-date.stale { color: var(--down); opacity: 1; }
 .board-date b { font-weight: 500; }

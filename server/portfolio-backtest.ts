@@ -8,6 +8,24 @@ import {
 } from './screening-strategies.ts'
 import type { KLineBar } from './tencent.ts'
 
+/**
+ * 入场方式（决定「买入时机」，这是回测里最容易被忽略、却最影响结果的一环）：
+ *  - nextOpen         触发次日开盘买入（默认，原行为）
+ *  - pullbackConfirm  触发后等待回踩 MA(pullbackMa) 附近并收阳再买（实测：同一批候选，
+ *                     20 日超额从 -3.34% 改善到 +0.58%，见 docs §17）
+ *  - breakoutConfirm  触发后等待收盘重新站上触发日收盘价再买（确认式）
+ */
+export type EntryMode = 'nextOpen' | 'pullbackConfirm' | 'breakoutConfirm'
+
+/** 状态过滤：信号日必须满足的市场状态（由调用方注入历史状态序列） */
+export interface RegimeSnapshot {
+  /** 当日全市场上涨家数占比 0~1 */
+  upRatio?: number
+  limitUpCount?: number
+  /** 情绪相位（可选，来自归档看板） */
+  phase?: string
+}
+
 export interface PortfolioBacktestConfig {
   strategyKeys: string[]
   strategyParams: StrategyParameterValues
@@ -25,7 +43,26 @@ export interface PortfolioBacktestConfig {
   slippageBps: number
   lotSize: number
   benchmarkCode: string
+  entryMode: EntryMode
+  /** pullbackConfirm 用的均线周期 */
+  pullbackMa: number
+  /** 回踩容差（%），现价距均线在该范围内视为回踩到位 */
+  pullbackTolerancePct: number
+  /** breakown/pullback 确认的最长等待交易日数，超时视为信号失效 */
+  confirmMaxWaitDays: number
+  /** 收盘跌破该比例（正数，如 8 表示 -8%）即止损；0 = 不启用 */
+  stopLossPct: number
+  /** 浮盈达到该比例（如 20）后转移动止盈；0 = 不启用 */
+  trailingStartPct: number
+  /** 移动止盈回撤幅度（如 8 表示从最高点回撤 8% 卖出） */
+  trailingBackPct: number
+  /** 只允许这些情绪相位开仓（空 = 不过滤） */
+  allowedPhases: string[]
+  /** 信号日全市场上涨占比下限（0 = 不过滤） */
+  minUpRatio: number
 }
+
+export type ExitReason = 'time' | 'stop' | 'trailing' | 'endOfData'
 
 export interface PortfolioTrade {
   code: string
@@ -41,6 +78,14 @@ export interface PortfolioTrade {
   pnl: number
   returnPct: number
   holdingDays: number
+  /** 信号日到实际买入日之间等待的交易日数（nextOpen 恒为 0） */
+  waitDays: number
+  /** 入场方式 */
+  entryMode: EntryMode
+  exitReason: ExitReason
+  /** 持有期内最大浮盈 / 最大浮亏（%） */
+  maxFavorablePct: number
+  maxAdversePct: number
   hitStrategies: string[]
 }
 
@@ -59,6 +104,15 @@ export interface PortfolioBacktestResult {
     endingEquity: number
     cash: number
     openPositions: number
+    /** 按退出原因拆分的笔数 */
+    exits: { time: number; stop: number; trailing: number; endOfData: number }
+    /** 平均持有交易日与平均等待入场交易日 */
+    averageHoldingDays: number
+    averageWaitDays: number
+    /** 被状态过滤拦掉的信号数 */
+    regimeRejected: number
+    /** 触发后等待入场超时（未等到回踩/确认）而放弃的信号数 */
+    entryTimeout: number
   }
   equityCurve: Array<{ date: string; equity: number; cash: number; positions: number; benchmark?: number }>
   trades: PortfolioTrade[]
@@ -69,9 +123,11 @@ export interface PortfolioBacktestResult {
 interface Candidate {
   code: string
   signalDate: string
+  /** 触发后的候选买入日（nextOpen = 次日；确认式 = 满足条件的那天，可能更晚） */
   entryDate: string
   plannedExitDate: string
   entryIndex: number
+  waitDays: number
   hitStrategies: string[]
 }
 
@@ -81,6 +137,10 @@ interface Position {
   entryPrice: number
   entryCost: number
   entryDate: string
+  /** 持有期内最高收盘价，用于移动止盈 */
+  peakPrice: number
+  maxFavorable: number
+  maxAdverse: number
 }
 
 const msOf = (timestamp: number): number => timestamp < 1e12 ? timestamp * 1000 : timestamp
@@ -131,9 +191,15 @@ const isLockedLimitDown = (code: string, bar: KLineBar, prevClose: number): bool
   return bar.high <= limit * 1.001
 }
 
+export interface PortfolioBacktestDeps {
+  /** 历史市场状态（日期 -> 宽度/涨停家数/相位），用于状态过滤 */
+  regime?: Map<string, RegimeSnapshot>
+}
+
 export async function runPortfolioBacktest(
   raw: Partial<PortfolioBacktestConfig>,
   loadBars: (code: string) => Promise<KLineBar[]>,
+  deps: PortfolioBacktestDeps = {},
 ): Promise<PortfolioBacktestResult> {
   const definitions = new Map(SCREENING_STRATEGIES.map((strategy) => [strategy.key, strategy]))
   const strategyKeys = [...new Set(raw.strategyKeys ?? [])]
@@ -169,6 +235,15 @@ export async function runPortfolioBacktest(
     slippageBps: Math.max(0, raw.slippageBps ?? 5),
     lotSize: Math.max(1, Math.round(raw.lotSize ?? 100)),
     benchmarkCode: /^(sh|sz)\d{6}$/.test(raw.benchmarkCode ?? '') ? raw.benchmarkCode! : 'sh000300',
+    entryMode: raw.entryMode === 'pullbackConfirm' || raw.entryMode === 'breakoutConfirm' ? raw.entryMode : 'nextOpen',
+    pullbackMa: Math.max(3, Math.min(60, Math.round(raw.pullbackMa ?? 10))),
+    pullbackTolerancePct: Math.max(0.2, Math.min(10, raw.pullbackTolerancePct ?? 2)),
+    confirmMaxWaitDays: Math.max(0, Math.min(30, Math.round(raw.confirmMaxWaitDays ?? 10))),
+    stopLossPct: Math.max(0, Math.min(50, raw.stopLossPct ?? 0)),
+    trailingStartPct: Math.max(0, Math.min(200, raw.trailingStartPct ?? 0)),
+    trailingBackPct: Math.max(0, Math.min(50, raw.trailingBackPct ?? 0)),
+    allowedPhases: Array.isArray(raw.allowedPhases) ? raw.allowedPhases.filter((item) => typeof item === 'string') : [],
+    minUpRatio: Math.max(0, Math.min(1, raw.minUpRatio ?? 0)),
   }
 
   const allBars = new Map<string, KLineBar[]>()
@@ -189,6 +264,27 @@ export async function runPortfolioBacktest(
   const candidatesByDate = new Map<string, Candidate[]>()
   const simulationDates = new Set<string>()
 
+  let regimeRejected = 0
+  let entryTimeout = 0
+
+  /** 均线值（用于回踩确认） */
+  const maAt = (bars: KLineBar[], index: number, period: number): number => {
+    if (index - period + 1 < 0) return 0
+    let sum = 0
+    for (let i = index - period + 1; i <= index; i++) sum += bars[i].close
+    return sum / period
+  }
+
+  /** 状态过滤：信号日必须满足注入的市场状态 */
+  const regimeAllows = (signalDate: string): boolean => {
+    if (!config.allowedPhases.length && !config.minUpRatio) return true
+    const snapshot = deps.regime?.get(signalDate)
+    if (!snapshot) return false
+    if (config.allowedPhases.length && (!snapshot.phase || !config.allowedPhases.includes(snapshot.phase))) return false
+    if (config.minUpRatio > 0 && (snapshot.upRatio ?? 0) < config.minUpRatio) return false
+    return true
+  }
+
   for (const code of codes) {
     const bars = allBars.get(code) ?? []
     for (const bar of bars) simulationDates.add(dayOf(bar.timestamp))
@@ -205,12 +301,49 @@ export async function runPortfolioBacktest(
       )
       const passed = config.combineMode === 'all' ? hits.length === strategyKeys.length : hits.length > 0
       if (!passed) continue
+      if (!regimeAllows(signalDate)) {
+        regimeRejected++
+        continue
+      }
+
+      // 入场时机：nextOpen 次日开盘；确认式则在后续若干交易日内等待条件成立
+      let entryIndex = index + 1
+      if (config.entryMode === 'pullbackConfirm') {
+        entryIndex = -1
+        const tolerance = config.pullbackTolerancePct / 100
+        const deadline = Math.min(index + 1 + config.confirmMaxWaitDays, bars.length - config.holdingDays - 1)
+        for (let k = index + 1; k <= deadline; k++) {
+          const ma = maAt(bars, k, config.pullbackMa)
+          if (!ma) continue
+          const near = Math.abs(bars[k].close / ma - 1) <= tolerance
+          const up = bars[k].close > bars[k - 1].close
+          if (near && up) {
+            entryIndex = k
+            break
+          }
+        }
+      } else if (config.entryMode === 'breakoutConfirm') {
+        entryIndex = -1
+        const triggerClose = bars[index].close
+        const deadline = Math.min(index + 1 + config.confirmMaxWaitDays, bars.length - config.holdingDays - 1)
+        for (let k = index + 1; k <= deadline; k++) {
+          if (bars[k].close >= triggerClose) {
+            entryIndex = k
+            break
+          }
+        }
+      }
+      if (entryIndex < 0 || entryIndex + config.holdingDays >= bars.length) {
+        entryTimeout++
+        continue
+      }
       const candidate: Candidate = {
         code,
         signalDate,
-        entryDate: dayOf(bars[index + 1].timestamp),
-        plannedExitDate: dayOf(bars[index + config.holdingDays].timestamp),
-        entryIndex: index + 1,
+        entryDate: dayOf(bars[entryIndex].timestamp),
+        plannedExitDate: dayOf(bars[entryIndex + config.holdingDays].timestamp),
+        entryIndex,
+        waitDays: entryIndex - index - 1,
         hitStrategies: hits,
       }
       const list = candidatesByDate.get(candidate.entryDate) ?? []
@@ -247,13 +380,25 @@ export async function runPortfolioBacktest(
       if (bar) lastPrices.set(code, bar.close)
     }
     for (const [code, position] of [...positions]) {
-      if (date < position.candidate.plannedExitDate) continue
       const bar = barsByDate.get(code)?.get(date)
       const index = indexByDate.get(code)?.get(date)
       const bars = allBars.get(code) ?? []
       if (!bar || index === undefined) continue
+      // 持有期内的浮动区间（用于评估入场时机好坏）
+      position.maxFavorable = Math.max(position.maxFavorable, bar.close / position.entryPrice - 1)
+      position.maxAdverse = Math.min(position.maxAdverse, bar.close / position.entryPrice - 1)
+      position.peakPrice = Math.max(position.peakPrice, bar.close)
+
+      const profit = bar.close / position.entryPrice - 1
+      const stopHit = config.stopLossPct > 0 && profit <= -config.stopLossPct / 100
+      const trailingHit = config.trailingStartPct > 0 && config.trailingBackPct > 0 &&
+        position.peakPrice / position.entryPrice - 1 >= config.trailingStartPct / 100 &&
+        bar.close <= position.peakPrice * (1 - config.trailingBackPct / 100)
+      const due = date >= position.candidate.plannedExitDate
+      if (!stopHit && !trailingHit && !due) continue
       const prevClose = bars[index - 1]?.close ?? bar.open
       if (isLockedLimitDown(code, bar, prevClose)) continue
+      const exitReason: ExitReason = stopHit ? 'stop' : trailingHit ? 'trailing' : 'time'
       const exitPrice = bar.close * (1 - config.slippageBps / 10_000)
       const grossProceeds = exitPrice * position.shares
       const commission = Math.max(config.minCommission, grossProceeds * config.commissionRate)
@@ -274,6 +419,11 @@ export async function runPortfolioBacktest(
         pnl: round(pnl, 2),
         returnPct: round(pnl / position.entryCost * 100),
         holdingDays: Math.max(1, Math.round((Date.parse(date) - Date.parse(position.entryDate)) / 86_400_000) + 1),
+        waitDays: position.candidate.waitDays,
+        entryMode: config.entryMode,
+        exitReason,
+        maxFavorablePct: round(position.maxFavorable * 100),
+        maxAdversePct: round(position.maxAdverse * 100),
         hitStrategies: position.candidate.hitStrategies,
       })
       positions.delete(code)
@@ -311,7 +461,16 @@ export async function runPortfolioBacktest(
       }
       const entryCost = shares * entryPrice + commission
       cash -= entryCost
-      positions.set(candidate.code, { candidate, shares, entryPrice, entryCost, entryDate: date })
+      positions.set(candidate.code, {
+        candidate,
+        shares,
+        entryPrice,
+        entryCost,
+        entryDate: date,
+        peakPrice: entryPrice,
+        maxFavorable: bar.close / entryPrice - 1,
+        maxAdverse: bar.close / entryPrice - 1,
+      })
     }
 
     const equity = currentEquity(date)
@@ -357,6 +516,16 @@ export async function runPortfolioBacktest(
       endingEquity: round(endingEquity, 2),
       cash: round(cash, 2),
       openPositions: positions.size,
+      exits: {
+        time: trades.filter((trade) => trade.exitReason === 'time').length,
+        stop: trades.filter((trade) => trade.exitReason === 'stop').length,
+        trailing: trades.filter((trade) => trade.exitReason === 'trailing').length,
+        endOfData: trades.filter((trade) => trade.exitReason === 'endOfData').length,
+      },
+      averageHoldingDays: round(mean(trades.map((trade) => trade.holdingDays))),
+      averageWaitDays: round(mean(trades.map((trade) => trade.waitDays))),
+      regimeRejected,
+      entryTimeout,
     },
     equityCurve,
     trades: trades.sort((a, b) => b.exitDate.localeCompare(a.exitDate)),
