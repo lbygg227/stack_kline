@@ -1103,7 +1103,8 @@ export function marketDataPlugin(): Plugin {
               if (!bars.length) continue
               const list: SignalBacktest[] = []
               const fundDays = fundHistory.codes[item.code]
-              if (fundDays?.length) {
+              // 少于 20 个交易日的历史不足以做资金线回测（当前数据源被限流时只会拿到 1 天）
+              if (fundDays && fundDays.length >= 20) {
                 list.push(backtestStockSignals(bars, 'fund_inflow', item.horizonDays ?? 5, item.code, { fundDays }))
               }
               const dragonDates = Object.keys(dragonHistory.days)
