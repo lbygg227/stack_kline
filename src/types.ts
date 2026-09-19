@@ -1408,6 +1408,8 @@ export interface RecommendationListResponse {
   entryPlans?: Record<string, EntryPlan | null>
   /** 个股历史回测：code -> 同类信号表现 */
   backtests?: Record<string, SignalBacktest>
+  /** 资金线/龙虎榜线历史回测（需先回补历史） */
+  evidenceBacktests?: Record<string, SignalBacktest[]>
   /** 按板拆分的分组与每块重点推荐（最多 5 个，且必须通过回测准入） */
   boards?: RecommendationBoardGroup[]
   /** 板块/涨停上下文的看板日期；落后时前端会明确提示 */
@@ -2131,4 +2133,43 @@ export interface RecommendationBoardGroup {
   total: number
   focus: RecommendationFocusItem[]
   focusRejected: Array<{ code: string; name: string; reason: string }>
+}
+export interface FocusPickSettlement {
+  entryDate: string
+  entryPrice: number
+  exitDate: string
+  exitPrice: number
+  returnPct: number
+  benchmarkReturnPct?: number
+  excessPct?: number
+  maxAdversePct: number
+  status: 'settled'
+}
+
+export interface FocusPick {
+  id: string
+  signalDate: string
+  board: BoardKey
+  code: string
+  name: string
+  style: string
+  confidence: number
+  focusScore: number
+  backtest: SignalBacktest | null
+  horizonDays: number
+  entryPlanMode?: string
+  settled?: FocusPickSettlement
+}
+
+export interface FocusStats {
+  total: number
+  settled: number
+  pending: number
+  winRate: number
+  averageReturnPct: number
+  averageExcessPct: number
+  averageMaxAdversePct: number
+  byBoard: Array<{ board: BoardKey; samples: number; winRate: number; averageExcessPct: number }>
+  byStyle: Array<{ style: string; samples: number; winRate: number; averageExcessPct: number }>
+  note: string
 }

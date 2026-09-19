@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { fetchRecommendations, fetchStockRecommendationHistory } from '../api'
+import { fetchFocusStats, fetchRecommendations, fetchStockRecommendationHistory } from '../api'
 import type {
   BoardKey,
+  FocusStats as ThesisFocusStats,
   EntryPlanMode,
   RecommendationListResponse,
   RecommendationRecord,
@@ -34,6 +35,16 @@ const ENTRY_LABEL: Record<EntryPlanMode, string> = {
 
 /** 板块切换：默认看第一个有重点推荐的板块 */
 const boardGroups = computed(() => data.value?.boards ?? [])
+/** 重点推荐的历史结算统计（自身也要能被回测） */
+const focusStats = ref<ThesisFocusStats | null>(null)
+
+async function loadFocusStats() {
+  try {
+    focusStats.value = await fetchFocusStats()
+  } catch {
+    focusStats.value = null
+  }
+}
 const activeBoard = ref<BoardKey | ''>('')
 watch(boardGroups, (groups) => {
   if (!groups.length) return
@@ -276,6 +287,7 @@ async function refreshQuietly() {
 
 onMounted(() => {
   void load()
+  void loadFocusStats()
   autoTimer = setInterval(() => void refreshQuietly(), 120_000)
 })
 
@@ -357,6 +369,14 @@ onUnmounted(() => {
           </button>
         </div>
 
+        <div v-if="focusStats" class="focus-track">
+          <span>重点推荐跟踪</span>
+          <span>已结算 <b>{{ focusStats.settled }}</b>/{{ focusStats.total }}</span>
+          <span>胜率 <b :class="focusStats.winRate >= 50 ? 'up' : 'down'">{{ focusStats.winRate }}%</b></span>
+          <span>平均超额 <b :class="focusStats.averageExcessPct >= 0 ? 'up' : 'down'">{{ focusStats.averageExcessPct }}%</b></span>
+          <span class="focus-track-note">{{ focusStats.note }}</span>
+        </div>
+
         <section v-if="currentBoard" class="focus-block">
           <header class="focus-head">
             <h3>{{ currentBoard.label }} · 重点推荐（最多 5 个，全部通过个股历史回测）</h3>
@@ -383,6 +403,15 @@ onUnmounted(() => {
                   超额 {{ focus.backtest.averageExcessPct >= 0 ? '+' : '' }}{{ focus.backtest.averageExcessPct }}%
                 </span>
                 <span class="num">止损率 {{ focus.backtest.stopRate }}%</span>
+              </div>
+              <div v-if="data.evidenceBacktests?.[focus.code]?.length" class="focus-backtest evidence">
+                <template v-for="bt in data.evidenceBacktests[focus.code]" :key="bt.basis">
+                  <span class="bt-tag">{{ bt.label }}</span>
+                  <span class="num">{{ bt.samples }} 次</span>
+                  <span class="num" :class="bt.averageExcessPct >= 0 ? 'up' : 'down'">
+                    超额 {{ bt.averageExcessPct >= 0 ? '+' : '' }}{{ bt.averageExcessPct }}%
+                  </span>
+                </template>
               </div>
               <div v-if="focus.entryPlan" class="focus-entry">
                 <span class="entry-tag" :class="'entry-' + focus.entryPlan.mode">{{ ENTRY_LABEL[focus.entryPlan.mode] }}</span>
@@ -809,6 +838,13 @@ onUnmounted(() => {
 .board-count { font-size: 11px; opacity: .7; }
 .board-focus-count { font-size: 10px; padding: 0 5px; border-radius: 8px; background: rgba(20,177,67,.14); color: #0f8f38; }
 
+.focus-track {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin-bottom: 10px; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel-2); font-size: 12px; color: var(--text-2);
+}
+.focus-track-note { color: var(--text-3); font-size: 11px; }
+.focus-backtest.evidence { margin-top: 4px; opacity: .9; }
 .focus-block { margin-bottom: 12px; }
 .focus-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
 .focus-head h3 { margin: 0; font-size: 13px; }

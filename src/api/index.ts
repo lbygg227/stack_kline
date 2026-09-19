@@ -1271,3 +1271,13 @@ export async function discussThesis(input: {
   }
   return (await res.json()) as ThesisDiscussResponse
 }
+/** 重点推荐跟踪统计（重点名单自身也要被回测） */
+export async function fetchFocusStats(): Promise<import('../types').FocusStats> {
+  const res = await fetch('/api/focus-picks')
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? 'focus picks http ' + res.status)
+  }
+  const data = (await res.json()) as { stats: import('../types').FocusStats }
+  return data.stats
+}

@@ -15,7 +15,15 @@
 import type { KLineBar } from './tencent.ts'
 import { sessionDateOf } from './trading-day.ts'
 
-export type SignalBasis = 'limit_up' | 'ma_breakout' | 'pullback_ma10' | 'trend_follow'
+export type SignalBasis =
+  | 'limit_up'
+  | 'ma_breakout'
+  | 'pullback_ma10'
+  | 'trend_follow'
+  /** 资金线：主力连续净流入（需要历史资金流） */
+  | 'fund_inflow'
+  /** 龙虎榜线：上榜且净买入为正（需要历史龙虎榜） */
+  | 'dragon_buy'
 
 export interface SignalBacktest {
   basis: SignalBasis
@@ -62,6 +70,16 @@ const BASIS_LABEL: Record<SignalBasis, string> = {
   ma_breakout: '突破（创 60 日新高且放量）',
   pullback_ma10: '回踩（MA10 附近收阳）',
   trend_follow: '趋势跟随（MA20 上行且站上）',
+  fund_inflow: '资金线（主力连续净流入）',
+  dragon_buy: '龙虎榜线（上榜且净买入）',
+}
+
+/** 资金/龙虎榜历史证据（来自历史回补，缺失时对应口径自动跳过） */
+export interface SignalEvidence {
+  /** 日频主力净额序列（升序） */
+  fundDays?: Array<{ date: string; mainNet: number }>
+  /** 该股历史上榜记录：交易日 -> 是否净买入 */
+  dragonDays?: Map<string, { netValue: number }>
 }
 
 /** 涨跌幅限制：科创/创业板 20%，北交所 30%，其余 10% */
@@ -89,6 +107,7 @@ export function backtestStockSignals(
   basis: SignalBasis,
   holdingDays = 5,
   code = '',
+  evidence: SignalEvidence = {},
 ): SignalBacktest {
   const clean = bars
     .filter((item) => Number.isFinite(item.close) && item.close > 0)
@@ -139,7 +158,14 @@ export function backtestStockSignals(
     const ma20Prev = sma(closes, i - 5, 20)
     const high60 = Math.max(...highs.slice(Math.max(0, i - 60), i))
     let hit = false
-    if (basis === 'limit_up') {
+    if (basis === 'fund_inflow') {
+      const series = evidence.fundDays ?? []
+      const index = series.findIndex((day) => day.date === sessionDateOf(clean[i].timestamp))
+      hit = index >= 1 && series[index].mainNet > 0 && series[index - 1].mainNet > 0
+    } else if (basis === 'dragon_buy') {
+      const record = evidence.dragonDays?.get(sessionDateOf(clean[i].timestamp))
+      hit = Boolean(record && record.netValue > 0)
+    } else if (basis === 'limit_up') {
       hit = ret >= limitPct - 0.005
     } else if (basis === 'ma_breakout') {
       hit = closes[i] > high60 && vma20 ? volumes[i] / vma20 >= 1.3 : false
@@ -155,7 +181,12 @@ export function backtestStockSignals(
   }
 
   if (!signals.length) {
-    return { ...empty, insufficient: '该股近期没有同类信号', startDate: sessionDateOf(clean[60]?.timestamp ?? 0), endDate: sessionDateOf(clean.at(-1)?.timestamp ?? 0) }
+    const reason = basis === 'fund_inflow' && !evidence.fundDays?.length
+      ? '未回补该股历史资金流'
+      : basis === 'dragon_buy' && !evidence.dragonDays?.size
+        ? '未回补该股历史龙虎榜'
+        : '该股近期没有同类信号'
+    return { ...empty, insufficient: reason, startDate: sessionDateOf(clean[60]?.timestamp ?? 0), endDate: sessionDateOf(clean.at(-1)?.timestamp ?? 0) }
   }
   const baseMean = average(baseline)
   const excess = signals.map((item) => (item.ret - baseMean) * 100)

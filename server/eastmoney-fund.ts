@@ -37,6 +37,15 @@ const num = (v: string | undefined): number => {
   return isFinite(n) ? n : 0
 }
 
+/**
+ * 日频资金流（主力/小单/中单/大单/超大单净额）。
+ *
+ * 实测（2026-09-18）：
+ *  - `push2his` 的 `fflow/kline/get` 最多返回 **120 个交易日**（约半年），lmt 再大也只给 120 行；
+ *    `fflow/daykline/get` 与 `lmt=0` 均返回空，因此半年是这条路的上限。
+ *  - `push2delay`（实时/延时口径）在 lmt 很大时只回 1 行，**不能用于历史**，所以历史请求优先走 push2his。
+ *  需要更长的资金流历史只能靠每日归档累积。
+ */
 export async function fetchFundFlow(code: string, days = 20): Promise<FundFlowResult> {
   const secid = toSecid(code)
   const headers = {
@@ -45,16 +54,18 @@ export async function fetchFundFlow(code: string, days = 20): Promise<FundFlowRe
       'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36',
   }
 
+  const requested = Math.max(1, Math.min(120, Math.round(days)))
   const hosts = [
-    'https://push2delay.eastmoney.com',
+    // 历史优先：延时口在大 lmt 时只回 1 行
     'https://push2his.eastmoney.com',
+    'https://push2delay.eastmoney.com',
   ]
 
   let lastErr: unknown
   for (const host of hosts) {
     const url =
       `${host}/api/qt/stock/fflow/kline/get` +
-      `?lmt=${days}&klt=101&secid=${secid}` +
+      `?lmt=${requested}&klt=101&secid=${secid}` +
       `&fields1=f1,f2,f3,f7` +
       `&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f62,f63,f64,f65`
 

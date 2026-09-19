@@ -130,6 +130,16 @@ import { buildEntryPlan, normalizeBars } from './entry-plan.ts'
 import { backtestStockSignals, basisForStyle, focusScore, qualifiesAsFocus, type SignalBacktest } from './signal-backtest.ts'
 import { BOARD_DEFINITIONS, boardOf, type BoardKey } from './recommendation-boards.ts'
 import {
+  backfillDragonTiger,
+  backfillFundFlow,
+  backfillProgress,
+  dragonTigerAt,
+  loadDragonTigerHistory,
+  loadFundFlowHistory,
+  tradingDatesOf,
+} from './history-backfill.ts'
+import { focusStats, loadFocusPicks, recordFocusPicks, settleFocusPicks } from './focus-tracking.ts'
+import {
   backtestLimitUpPools,
   backtestSectorTrend,
   buildSectorSeries,
@@ -668,6 +678,68 @@ export function marketDataPlugin(): Plugin {
           return
         }
 
+
+        // ---- 历史回补（资金流 / 龙虎榜）----
+        if (path === '/api/history/backfill') {
+          if (req.method === 'GET') {
+            sendJson(res, 200, { progress: backfillProgress(), fundCodes: Object.keys(loadFundFlowHistory().codes).length, dragonDays: Object.keys(loadDragonTigerHistory().days).length })
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as {
+                kind?: 'fund' | 'dragon'
+                codes?: string[]
+                days?: number
+                dragonDays?: number
+                force?: boolean
+                /** 单批上限，避免一次打太多请求被数据源限流 */
+                limit?: number
+              }
+              const kind = body.kind === 'dragon' ? 'dragon' : 'fund'
+              if (kind === 'fund') {
+                const pool = service.stocksWithIndustry()
+                // 默认按成交额取前 300 只回补（覆盖推荐候选与热点板块），也可用 codes 精确指定
+                const target = Array.isArray(body.codes) && body.codes.length
+                  ? body.codes.slice(0, 800)
+                  : [...pool].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0)).slice(0, 300).map((stock) => stock.code)
+                const batch = target.slice(0, Math.max(10, Math.min(200, body.limit ?? 100)))
+                const task = backfillFundFlow(batch, { days: body.days ?? 120, force: body.force === true })
+                sendJson(res, 202, {
+                  ok: true,
+                  kind,
+                  total: batch.length,
+                  message: '已在后台限速回补（默认并发 1、间隔 800ms），可 GET 该接口查看进度；中断后可再次调用续传',
+                })
+                void task.catch((e) => console.warn('[backfill] 资金流回补失败：', e instanceof Error ? e.message : e))
+                return
+              }
+              const bars = loadCachedKline('sh000001')
+              const dates = tradingDatesOf(bars, Math.max(5, Math.min(400, body.dragonDays ?? 120)))
+              const task = backfillDragonTiger(dates.slice(-Math.max(10, Math.min(200, body.limit ?? 120))))
+              sendJson(res, 202, { ok: true, kind, total: dates.length, message: '已在后台开始回补龙虎榜，可 GET 该接口查看进度' })
+              void task.catch((e) => console.warn('[backfill] 龙虎榜回补失败：', e instanceof Error ? e.message : e))
+              return
+            } catch (e) {
+              sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
+          return
+        }
+
+        // ---- 重点推荐跟踪与结算 ----
+        if (path === '/api/focus-picks') {
+          try {
+            const picks = await settleFocusPicks((code) => getKlineWithCache(code, 'day', 2000))
+            sendJson(res, 200, { picks: picks.slice(0, 200), stats: focusStats(picks), stored: loadFocusPicks().picks.length })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
         // ---- 每日复盘摘要 ----
         if (path === '/api/digest') {
           sendJson(res, 200, {
@@ -1022,6 +1094,30 @@ export function marketDataPlugin(): Plugin {
               const key = boardOf(item.code)
               byBoard.set(key, [...(byBoard.get(key) ?? []), item])
             }
+            // 资金线 / 龙虎榜线证据（来自历史回补；没有回补时自动跳过）
+            const fundHistory = loadFundFlowHistory()
+            const dragonHistory = loadDragonTigerHistory()
+            const evidenceBacktests: Record<string, SignalBacktest[]> = {}
+            for (const item of result.items.slice(0, 80)) {
+              const bars = normalizeBars(loadCachedKline(item.code))
+              if (!bars.length) continue
+              const list: SignalBacktest[] = []
+              const fundDays = fundHistory.codes[item.code]
+              if (fundDays?.length) {
+                list.push(backtestStockSignals(bars, 'fund_inflow', item.horizonDays ?? 5, item.code, { fundDays }))
+              }
+              const dragonDates = Object.keys(dragonHistory.days)
+              if (dragonDates.length) {
+                const map = new Map<string, { netValue: number }>()
+                for (const date of dragonDates) {
+                  const record = dragonTigerAt(dragonHistory, item.code, date)
+                  if (record) map.set(date, { netValue: record.netValue })
+                }
+                if (map.size) list.push(backtestStockSignals(bars, 'dragon_buy', item.horizonDays ?? 5, item.code, { dragonDays: map }))
+              }
+              if (list.length) evidenceBacktests[item.code] = list
+            }
+
             const boardGroups = BOARD_DEFINITIONS.map((definition) => {
               const items = (byBoard.get(definition.key) ?? []).slice().sort((a, b) => b.confidence - a.confidence)
               const focus = items
@@ -1055,10 +1151,30 @@ export function marketDataPlugin(): Plugin {
               }
             }).filter((group) => group.total > 0)
 
+            // 重点推荐落库（同一天重复请求不会重复记录），供后续结算与跟踪
+            const signalDate = result.items[0]?.signalDate ?? expected
+            recordFocusPicks({
+              signalDate,
+              picks: boardGroups.flatMap((group) =>
+                group.focus.map((entry) => ({
+                  board: group.key,
+                  code: entry.code,
+                  name: entry.name,
+                  style: entry.style,
+                  confidence: entry.confidence,
+                  focusScore: focusScore(entry.confidence, entry.backtest ?? null),
+                  backtest: entry.backtest ?? null,
+                  horizonDays: result.items.find((item) => item.code === entry.code)?.horizonDays ?? 5,
+                  entryPlanMode: entry.entryPlan?.mode,
+                })),
+              ),
+            })
+
             sendJson(res, 200, {
               ...result,
               entryPlans: plans,
               backtests,
+              evidenceBacktests,
               boards: boardGroups,
               boardDate: board?.date,
               boardStale: !board || board.date !== expected,
