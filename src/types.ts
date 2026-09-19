@@ -1406,6 +1406,10 @@ export interface RecommendationListResponse {
   items: RecommendationRecord[]
   /** 买入时机：code -> 入场计划 */
   entryPlans?: Record<string, EntryPlan | null>
+  /** 个股历史回测：code -> 同类信号表现 */
+  backtests?: Record<string, SignalBacktest>
+  /** 按板拆分的分组与每块重点推荐（最多 5 个，且必须通过回测准入） */
+  boards?: RecommendationBoardGroup[]
   /** 板块/涨停上下文的看板日期；落后时前端会明确提示 */
   boardDate?: string
   boardStale?: boolean
@@ -2090,4 +2094,41 @@ export interface ThesisListResponse {
 export interface ThesisDiscussResponse {
   reply: string
   neededData: string[]
+}
+export type SignalBasis = 'limit_up' | 'ma_breakout' | 'pullback_ma10' | 'trend_follow'
+
+export interface SignalBacktest {
+  basis: SignalBasis
+  label: string
+  samples: number
+  winRate: number
+  averageExcessPct: number
+  medianExcessPct: number
+  stopRate: number
+  holdingDays: number
+  startDate: string
+  endDate: string
+  insufficient?: string
+  note: string
+}
+
+export type BoardKey = 'main' | 'gem' | 'star' | 'bse'
+
+export interface RecommendationFocusItem {
+  code: string
+  name: string
+  confidence: number
+  style: RecommendationStyle
+  reason: string
+  backtest: SignalBacktest | null
+  entryPlan: EntryPlan | null
+}
+
+export interface RecommendationBoardGroup {
+  key: BoardKey
+  label: string
+  hint: string
+  total: number
+  focus: RecommendationFocusItem[]
+  focusRejected: Array<{ code: string; name: string; reason: string }>
 }

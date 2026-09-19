@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { fetchRecommendations, fetchStockRecommendationHistory } from '../api'
 import type {
+  BoardKey,
   EntryPlanMode,
   RecommendationListResponse,
   RecommendationRecord,
@@ -29,6 +30,31 @@ const ENTRY_LABEL: Record<EntryPlanMode, string> = {
   pullback: '等回踩',
   confirm: '等确认',
   wait: '先观察',
+}
+
+/** 板块切换：默认看第一个有重点推荐的板块 */
+const boardGroups = computed(() => data.value?.boards ?? [])
+const activeBoard = ref<BoardKey | ''>('')
+watch(boardGroups, (groups) => {
+  if (!groups.length) return
+  if (groups.some((group) => group.key === activeBoard.value)) return
+  activeBoard.value = (groups.find((group) => group.focus.length) ?? groups[0]).key
+})
+const currentBoard = computed(() => boardGroups.value.find((group) => group.key === activeBoard.value) ?? boardGroups.value[0])
+/** 当前板块的全量列表（表格用），受板块筛选与热点板块筛选共同约束 */
+const boardItems = computed(() => {
+  const board = currentBoard.value
+  if (!board) return visibleItems.value
+  const codes = new Set((data.value?.items ?? []).filter((item) => boardOfCode(item.code) === board.key).map((item) => item.code))
+  return visibleItems.value.filter((item) => codes.has(item.code))
+})
+
+function boardOfCode(code: string): BoardKey {
+  const value = (code ?? '').toLowerCase()
+  if (value.startsWith('bj')) return 'bse'
+  if (value.startsWith('sz30')) return 'gem'
+  if (value.startsWith('sh688')) return 'star'
+  return 'main'
 }
 
 /** 数据生成时间：把「新不新」直接摆在界面上，避免再靠感觉判断延迟 */
@@ -317,6 +343,61 @@ onUnmounted(() => {
 
     <div v-if="data" class="today-main">
       <div class="rec-table-wrap">
+        <div v-if="boardGroups.length" class="board-tabs">
+          <button
+            v-for="group in boardGroups"
+            :key="group.key"
+            class="board-tab"
+            :class="{ active: currentBoard?.key === group.key }"
+            @click="activeBoard = group.key"
+          >
+            {{ group.label }}
+            <span class="board-count">{{ group.total }}</span>
+            <span v-if="group.focus.length" class="board-focus-count">重点 {{ group.focus.length }}</span>
+          </button>
+        </div>
+
+        <section v-if="currentBoard" class="focus-block">
+          <header class="focus-head">
+            <h3>{{ currentBoard.label }} · 重点推荐（最多 5 个，全部通过个股历史回测）</h3>
+            <span class="focus-hint">{{ currentBoard.hint }}</span>
+          </header>
+          <div v-if="currentBoard.focus.length" class="focus-grid">
+            <article
+              v-for="focus in currentBoard.focus"
+              :key="'focus-' + focus.code"
+              class="focus-card"
+              @click="selected = data.items.find((item) => item.code === focus.code) ?? null"
+            >
+              <div class="focus-top">
+                <MarketBadge :code="focus.code" />
+                <b class="focus-name">{{ focus.name }}</b>
+                <span class="focus-conf num">置信 {{ focus.confidence }}</span>
+              </div>
+              <p class="focus-reason">{{ focus.reason }}</p>
+              <div v-if="focus.backtest" class="focus-backtest">
+                <span class="bt-tag">{{ focus.backtest.label }}</span>
+                <span class="num">历史 {{ focus.backtest.samples }} 次</span>
+                <span class="num">胜率 {{ focus.backtest.winRate }}%</span>
+                <span class="num" :class="focus.backtest.averageExcessPct >= 0 ? 'up' : 'down'">
+                  超额 {{ focus.backtest.averageExcessPct >= 0 ? '+' : '' }}{{ focus.backtest.averageExcessPct }}%
+                </span>
+                <span class="num">止损率 {{ focus.backtest.stopRate }}%</span>
+              </div>
+              <div v-if="focus.entryPlan" class="focus-entry">
+                <span class="entry-tag" :class="'entry-' + focus.entryPlan.mode">{{ ENTRY_LABEL[focus.entryPlan.mode] }}</span>
+                <span>{{ focus.entryPlan.label }}</span>
+              </div>
+            </article>
+          </div>
+          <p v-else class="focus-empty">
+            该板块暂无通过回测准入的重点推荐（宁可少给也不凑数）。被挡下的原因示例：
+            <span v-for="(item, index) in currentBoard.focusRejected" :key="item.code">
+              {{ index > 0 ? '；' : '' }}{{ item.name }} —— {{ item.reason }}
+            </span>
+          </p>
+        </section>
+
         <div v-if="data.recycled?.length" class="recycle-strip">
           <span class="recycle-title">回流 {{ data.recycled.length }}</span>
           <span class="recycle-desc">
@@ -373,6 +454,7 @@ onUnmounted(() => {
               <th class="num">止损</th>
               <th class="num">周期</th>
               <th>买入时机</th>
+              <th>个股回测</th>
               <th>板块</th>
               <th>核心理由</th>
               <th>来源</th>
@@ -380,7 +462,7 @@ onUnmounted(() => {
           </thead>
           <tbody>
             <tr
-              v-for="item in visibleItems"
+              v-for="item in boardItems"
               :key="item.id"
               :class="{ active: selected?.id === item.id }"
               @click="selected = item"
@@ -415,6 +497,15 @@ onUnmounted(() => {
                 </template>
                 <span v-else class="flat">—</span>
               </td>
+              <td class="bt-cell">
+                <template v-if="data.backtests?.[item.code]">
+                  <span class="num" :class="(data.backtests[item.code]!.averageExcessPct ?? 0) >= 0 ? 'up' : 'down'">
+                    {{ data.backtests[item.code]!.samples }}次 /
+                    {{ data.backtests[item.code]!.averageExcessPct >= 0 ? '+' : '' }}{{ data.backtests[item.code]!.averageExcessPct }}%
+                  </span>
+                </template>
+                <span v-else class="flat">—</span>
+              </td>
               <td class="sector-cell">
                 <template v-if="item.board?.topSector">
                   <span class="sector-name">{{ item.board.topSector }}</span>
@@ -434,7 +525,7 @@ onUnmounted(() => {
             </tr>
           </tbody>
         </table>
-        <div v-if="visibleItems.length === 0" class="today-state">
+        <div v-if="boardItems.length === 0" class="today-state">
           {{ selectedSector ? '该板块暂无推荐标的（可点击「全部」查看全部）' : '暂无可推荐标的' }}
         </div>
       </div>
@@ -706,6 +797,36 @@ onUnmounted(() => {
 .entry-tag.entry-wait { color: var(--text-3); }
 .entry-price { margin-left: 4px; font-size: 11px; color: var(--text-2); }
 .entry-note { margin: 4px 0 0; font-size: 11px; line-height: 1.6; color: var(--text-3); }
+.bt-cell { white-space: nowrap; font-size: 11px; }
+
+.board-tabs { display: flex; gap: 6px; margin-bottom: 10px; }
+.board-tab {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--panel-2); color: var(--text-2); font-size: 13px; cursor: pointer;
+}
+.board-tab.active { border-color: var(--primary); color: var(--primary); background: rgba(30,111,255,.08); font-weight: 600; }
+.board-count { font-size: 11px; opacity: .7; }
+.board-focus-count { font-size: 10px; padding: 0 5px; border-radius: 8px; background: rgba(20,177,67,.14); color: #0f8f38; }
+
+.focus-block { margin-bottom: 12px; }
+.focus-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.focus-head h3 { margin: 0; font-size: 13px; }
+.focus-hint { font-size: 11px; color: var(--text-3); }
+.focus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+.focus-card {
+  padding: 10px; border: 1px solid var(--border); border-left: 3px solid var(--primary);
+  border-radius: 8px; background: var(--panel-2); cursor: pointer;
+}
+.focus-card:hover { border-color: var(--primary); }
+.focus-top { display: flex; align-items: center; gap: 6px; }
+.focus-name { font-size: 13px; }
+.focus-conf { margin-left: auto; font-size: 11px; color: var(--text-2); }
+.focus-reason { margin: 6px 0; font-size: 11px; line-height: 1.5; color: var(--text-2); }
+.focus-backtest { display: flex; flex-wrap: wrap; gap: 6px; font-size: 11px; color: var(--text-2); }
+.bt-tag { padding: 0 5px; border-radius: 6px; border: 1px solid var(--border); color: var(--text-3); }
+.focus-entry { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11px; color: var(--text-2); }
+.focus-empty { margin: 0; font-size: 12px; color: var(--text-3); line-height: 1.7; }
 .board-date { margin-left: auto; opacity: 0.75; }
 .board-date.stale { color: var(--down); opacity: 1; }
 .board-date b { font-weight: 500; }

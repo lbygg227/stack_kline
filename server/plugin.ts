@@ -6,11 +6,13 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Plugin, ViteDevServer } from 'vite'
 import { listPointInTimeSnapshots, service } from './service.ts'
+import { readJson } from './store.ts'
 import {
   getExpectedLatestTradingDate,
   getKlineCoverage,
   getKlineWithCache,
   syncLatestDailyKlines,
+  type KLineBar,
 } from './tencent.ts'
 import { extractOpinionDocument, generateStockBrief, parseNaturalLanguage } from './deepseek.ts'
 import { type StrategyConditions } from './strategy.ts'
@@ -125,6 +127,8 @@ import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import { BOARD_TTL_MS, expectedBoardDate, inTradingWindow, resolveBoard } from './board-cache.ts'
 import { buildEntryPlan, normalizeBars } from './entry-plan.ts'
+import { backtestStockSignals, basisForStyle, focusScore, qualifiesAsFocus, type SignalBacktest } from './signal-backtest.ts'
+import { BOARD_DEFINITIONS, boardOf, type BoardKey } from './recommendation-boards.ts'
 import {
   backtestLimitUpPools,
   backtestSectorTrend,
@@ -232,6 +236,12 @@ function attachRemoteTunnel(server: ViteDevServer): void {
 
 /** 涨停板当日缓存：构建一次需要日K回溯 + 分时（约 20s），不随请求重复计算 */
 let limitUpCache: { at: number; board: LimitUpBoard } | null = null
+
+/** 只读本地日线缓存（不触发网络请求），用于给推荐补买入时机与历史回测 */
+function loadCachedKline(code: string): KLineBar[] {
+  const cached = readJson<{ bars?: KLineBar[] }>(`kline-cache/${code}_day.json`)
+  return cached?.bars ?? []
+}
 let boardRefresh: Promise<LimitUpBoard | null> | null = null
 let boardRefreshStartedAt = 0
 /** 资金共识分：与涨停板一起缓存，供推荐与接口复用 */
@@ -988,23 +998,68 @@ export function marketDataPlugin(): Plugin {
               board ? { board, consensus, sectorTrends: currentSectorTrends() } : { consensus },
             )
             const expected = expectedBoardDate()
-            // 买入时机：给每条推荐附上可执行的入场计划（现价 / 回踩 MA10 / 确认式）
+            // 买入时机 + 个股历史回测：都给每条推荐附上（只读本地日线缓存，不发请求）
             const plans: Record<string, ReturnType<typeof buildEntryPlan>> = {}
-            await Promise.all(result.items.slice(0, 60).map(async (item) => {
+            const backtests: Record<string, SignalBacktest> = {}
+            await Promise.all(result.items.slice(0, 80).map(async (item) => {
               try {
-                const bars = normalizeBars(await getKlineWithCache(item.code, 'day', 200))
+                const bars = normalizeBars(loadCachedKline(item.code))
+                if (!bars.length) return
                 plans[item.code] = buildEntryPlan(bars, {
                   style: item.style,
                   stopLoss: item.levels?.stopLoss,
                   target: item.levels?.target,
                 })
+                backtests[item.code] = backtestStockSignals(bars, basisForStyle(item.style), item.horizonDays ?? 5, item.code)
               } catch {
                 /* 单只失败不影响整体 */
               }
             }))
+
+            // 按板块分组：全量列表 + 每块最多 5 个「有回测证据」的重点
+            const byBoard = new Map<BoardKey, typeof result.items>()
+            for (const item of result.items) {
+              const key = boardOf(item.code)
+              byBoard.set(key, [...(byBoard.get(key) ?? []), item])
+            }
+            const boardGroups = BOARD_DEFINITIONS.map((definition) => {
+              const items = (byBoard.get(definition.key) ?? []).slice().sort((a, b) => b.confidence - a.confidence)
+              const focus = items
+                .map((item) => ({ item, backtest: backtests[item.code] ?? null }))
+                .filter((entry) => qualifiesAsFocus(entry.backtest, { confidence: entry.item.confidence }).pass)
+                .sort((a, b) => focusScore(b.item.confidence, b.backtest) - focusScore(a.item.confidence, a.backtest))
+                .slice(0, definition.focusLimit)
+              return {
+                key: definition.key,
+                label: definition.label,
+                hint: definition.hint,
+                total: items.length,
+                focus: focus.map((entry) => ({
+                  code: entry.item.code,
+                  name: entry.item.name,
+                  confidence: entry.item.confidence,
+                  style: entry.item.style,
+                  reason: entry.item.reasonSummary?.topLabels?.slice(0, 2).join('、') ?? entry.item.thesis,
+                  backtest: entry.backtest,
+                  entryPlan: plans[entry.item.code] ?? null,
+                })),
+                /** 该板块被准入挡下的说明（前 3 条，便于解释为什么没有 5 个重点） */
+                focusRejected: items
+                  .slice(0, 3)
+                  .map((item) => ({
+                    code: item.code,
+                    name: item.name,
+                    reason: qualifiesAsFocus(backtests[item.code] ?? null, { confidence: item.confidence }).reason,
+                  }))
+                  .filter((entry) => !qualifiesAsFocus(backtests[entry.code] ?? null, { confidence: items.find((x) => x.code === entry.code)?.confidence }).pass),
+              }
+            }).filter((group) => group.total > 0)
+
             sendJson(res, 200, {
               ...result,
               entryPlans: plans,
+              backtests,
+              boards: boardGroups,
               boardDate: board?.date,
               boardStale: !board || board.date !== expected,
               boardExpectedDate: expected,
