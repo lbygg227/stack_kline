@@ -300,3 +300,180 @@ ${input.content.slice(0, 18_000)}${extraRule}`
     model: 'deepseek-chat',
   }
 }
+
+
+// ---------------------------------------------------------------- 我的观点（观点工作台）
+
+export interface ThesisStructureInput {
+  text: string
+  /** 已从文本中确定性匹配到的候选标的（全市场名单里真的出现的） */
+  candidates: Array<{ code: string; name: string; industry?: string }>
+}
+
+export interface ThesisStructureResult {
+  code: string
+  name: string
+  direction: 'bull' | 'bear' | 'watch'
+  style: 'trend' | 'limit_up' | 'pullback' | 'leader' | 'relay' | 'event' | 'fund' | 'opinion'
+  horizonDays: number
+  claims: Array<{ text: string; dimension: 'board' | 'fundamental' | 'technical' | 'fund' | 'dragon' | 'event' | 'opinion' | 'industry' | 'sentiment' }>
+}
+
+/** 把用户的一句话判断结构化成「标的 + 方向 + 风格 + 可检验逻辑」 */
+export async function structureThesis(input: ThesisStructureInput): Promise<ThesisStructureResult | null> {
+  const system = `你是 A 股研究助手，负责把用户的观点拆成结构化、可检验的假设。你只做结构化，不做推荐、不编造数据。
+候选标的只能从给定的 candidates 里选；如果文本里没有匹配到候选标的，code 返回空字符串。`
+  const user = `请把下面的观点结构化成 JSON（只输出 JSON）：
+{
+  "code": "候选标的代码，必须来自 candidates，否则为空字符串",
+  "name": "标的名称",
+  "direction": "bull|bear|watch",
+  "style": "trend|limit_up|pullback|leader|relay|event|fund|opinion",
+  "horizonDays": 5,
+  "claims": [{ "text": "该观点的可检验子逻辑（保持用户原意，不要扩展）", "dimension": "board|fundamental|technical|fund|dragon|event|opinion|industry|sentiment" }]
+}
+规则：
+1. claims 拆 1~4 条，每条都必须是「可以用数据验证真假」的陈述，不要写空话。
+2. style 判定：提到打板/涨停/连板→limit_up；低吸/回调/回踩→pullback；龙头→leader；补涨→relay；
+   政策/公告/事件/订单→event；业绩/估值/基本面→fund；博主/大V→opinion；其余趋势类→trend。
+3. horizonDays：打板/接力 3 日，低吸 10 日，其余 5 日；用户明确说了天数就按用户的。
+4. dimension 判定：板块/题材/主线→board；业绩/估值→fundamental；均线/量能/形态→technical；
+   主力资金/北向→fund；龙虎榜/游资→dragon；政策/公告/新闻→event；博主观点→opinion；情绪/连板高度→sentiment。
+
+candidates：${JSON.stringify(input.candidates)}
+用户观点：${input.text.slice(0, 2000)}`
+  const parsed = await callDeepSeekJson<ThesisStructureResult>(system, user, 1200)
+  if (!parsed || typeof parsed !== 'object') return null
+  const candidateCodes = new Set(input.candidates.map((item) => item.code))
+  const code = typeof parsed.code === 'string' && candidateCodes.has(parsed.code.toLowerCase()) ? parsed.code.toLowerCase() : ''
+  if (!code) return null
+  const candidate = input.candidates.find((item) => item.code === code)
+  const dimensions = ['board', 'fundamental', 'technical', 'fund', 'dragon', 'event', 'opinion', 'industry', 'sentiment']
+  const styles = ['trend', 'limit_up', 'pullback', 'leader', 'relay', 'event', 'fund', 'opinion']
+  const claims = Array.isArray(parsed.claims)
+    ? parsed.claims
+        .filter((claim) => claim && typeof claim.text === 'string' && claim.text.trim().length >= 4)
+        .slice(0, 4)
+        .map((claim) => ({
+          text: claim.text.trim().slice(0, 160),
+          dimension: dimensions.includes(claim.dimension) ? claim.dimension : 'technical',
+        }))
+    : []
+  return {
+    code,
+    name: candidate?.name ?? (typeof parsed.name === 'string' ? parsed.name : code),
+    direction: parsed.direction === 'bull' || parsed.direction === 'bear' ? parsed.direction : 'watch',
+    style: styles.includes(parsed.style) ? parsed.style : 'trend',
+    horizonDays: Math.max(1, Math.min(60, Math.round(Number(parsed.horizonDays) || 5))),
+    claims,
+  }
+}
+
+export interface ThesisReviewInput {
+  direction: 'bull' | 'bear' | 'watch'
+  style: string
+  horizonDays: number
+  claims: Array<{ text: string; verdict: string; evidence: string[]; counter: string[] }>
+  facts: Array<{ label: string; detail: string; stance: string }>
+  /** 规则引擎算出的支持度与结论，模型只能解释，不能改 */
+  score: number
+  conclusion: string
+  similar: string[]
+}
+
+export interface ThesisReviewResult {
+  summary: string
+  keyPoints: string[]
+  counterPoints: string[]
+  invalidation: string[]
+  watch: string[]
+}
+
+/** 用模型把「规则给出的结论 + 事实清单」写成可读的评审意见（禁止改结论、禁止编数字） */
+export async function phraseThesisReview(input: ThesisReviewInput): Promise<ThesisReviewResult | null> {
+  const system = `你是 A 股研究助手，负责把已经算好的事实清单写成评审意见。铁律：
+1. 只能使用输入里出现过的数字与事实，禁止补充任何外部数据、禁止编造指标；
+2. 不能修改输入给出的 score 与 conclusion，你的文字必须与之一致；
+3. 必须同时给出支持面与反证面，反证面不得为空（若确实没有反证，就写「暂无反向证据，但样本有限」）；
+4. 失效条件要写成可观测的阈值（价位、板块状态、资金方向、事件），不要写「跌破趋势」这种空话。`
+  const user = `请基于以下已算好的事实输出 JSON：
+{
+  "summary": "60 字内的结论说明（必须与 conclusion 一致）",
+  "keyPoints": ["支持这个判断的要点，最多 4 条，带数字"],
+  "counterPoints": ["反证或需要警惕的点，最多 4 条，带数字"],
+  "invalidation": ["失效条件，最多 3 条，必须是可观测阈值"],
+  "watch": ["接下来盯什么，最多 3 条"]
+}
+
+事实清单：
+${JSON.stringify(input.facts)}
+规则引擎结论：支持度 ${input.score}/100，conclusion=${input.conclusion}，方向=${input.direction}，风格=${input.style}，持有期=${input.horizonDays} 日
+逐条逻辑判定：${JSON.stringify(input.claims)}
+历史同类情形：${JSON.stringify(input.similar)}`
+  const parsed = await callDeepSeekJson<ThesisReviewResult>(system, user, 1600)
+  if (!parsed || typeof parsed !== 'object') return null
+  const list = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).slice(0, 4) : []
+  return {
+    summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : '',
+    keyPoints: list(parsed.keyPoints),
+    counterPoints: list(parsed.counterPoints),
+    invalidation: list(parsed.invalidation).slice(0, 3),
+    watch: list(parsed.watch).slice(0, 3),
+  }
+}
+
+/** 多轮讨论：模型只负责「该关注什么 / 缺什么证据」，数据由服务端补 */
+export async function discussThesis(input: {
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+  facts: Array<{ label: string; detail: string; stance: string }>
+  question: string
+}): Promise<{ reply: string; neededData: string[] } | null> {
+  const system = `你是 A 股研究助手，与用户讨论他/她对某只股票或板块的判断。铁律：
+1. 事实清单里有的数据才能引用，禁止编造数字与新闻；
+2. 如果用户的反驳需要用事实清单里没有的数据来判断，必须在 neededData 里列出需要补的数据项，而不是猜；
+3. 不要顺着用户说，也不要为反对而反对：明确区分「数据支持」「数据反对」「数据不足」三种情况。`
+  const user = `事实清单：${JSON.stringify(input.facts)}
+
+对话历史：${JSON.stringify(input.history.slice(-8))}
+
+用户最新发言：${input.question}
+
+请输出 JSON：{ "reply": "你的回应（150 字内，明确区分数据支持/反对/不足）", "neededData": ["需要补充的数据项，没有就空数组"] }`
+  const parsed = await callDeepSeekJson<{ reply?: string; neededData?: string[] }>(system, user, 900)
+  if (!parsed || typeof parsed.reply !== 'string') return null
+  return {
+    reply: parsed.reply.slice(0, 600),
+    neededData: Array.isArray(parsed.neededData)
+      ? parsed.neededData.filter((item): item is string => typeof item === 'string').slice(0, 4)
+      : [],
+  }
+}
+
+/** 统一的 JSON 调用 + 容错解析 */
+async function callDeepSeekJson<T>(system: string, user: string, maxTokens: number): Promise<T | null> {
+  const res = await fetch(DEEPSEEK_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${DEEPSEEK_KEY}`,
+    },
+    body: JSON.stringify({
+      model: 'deepseek-chat',
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+      response_format: { type: 'json_object' },
+      temperature: 0.2,
+      max_tokens: maxTokens,
+    }),
+  })
+  if (!res.ok) {
+    const err = await res.text().catch(() => '')
+    throw new Error(`deepseek http ${res.status}: ${err.slice(0, 200)}`)
+  }
+  const json = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> }
+  const content = json.choices?.[0]?.message?.content ?? ''
+  return parseJsonLoose(content) as T | null
+}

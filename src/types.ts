@@ -1922,3 +1922,148 @@ export interface StyleBacktestResult {
   skippedCodes: Array<{ code: string; reason: string }>
   warnings: string[]
 }
+
+// ---------------------------------------------------------------- 我的观点工作台
+
+export type ThesisDirection = 'bull' | 'bear' | 'watch'
+export type ThesisStyle = 'trend' | 'limit_up' | 'pullback' | 'leader' | 'relay' | 'event' | 'fund' | 'opinion'
+export type ThesisDimension =
+  | 'board' | 'fundamental' | 'technical' | 'fund' | 'dragon' | 'event' | 'opinion' | 'industry' | 'sentiment'
+
+export interface ThesisFact {
+  dimension: ThesisDimension
+  key: string
+  label: string
+  detail: string
+  stance: 'support' | 'against' | 'neutral'
+  weight: number
+  strength: number
+  source: string
+}
+
+export interface ThesisClaim {
+  text: string
+  dimension: ThesisDimension
+  verdict: 'supported' | 'refuted' | 'unknown'
+  evidence: string[]
+  counter: string[]
+}
+
+export interface ThesisVerdict {
+  conclusion: 'support' | 'partial' | 'against'
+  score: number
+  summary: string
+  keyPoints: string[]
+  counterPoints: string[]
+  invalidation: string[]
+  watch: string[]
+}
+
+export interface ThesisStructure {
+  code: string
+  name: string
+  direction: ThesisDirection
+  style: ThesisStyle
+  horizonDays: number
+  claims: Array<{ text: string; dimension: ThesisDimension }>
+  parser: 'llm' | 'rule'
+}
+
+export interface ThesisPack {
+  code: string
+  name: string
+  price: number
+  changePct: number
+  industry?: string
+  concepts: string[]
+  sector?: {
+    name: string
+    type: 'industry' | 'concept'
+    heat?: number
+    limitUpCount?: number
+    maxBoard?: number
+    leaderName?: string
+    mainNetInflowYi?: number
+    trend?: string
+    stage?: string
+    change5d?: number
+    todayChangePct?: number
+    rankDelta?: number
+  }
+  sentiment?: { phase: string; score: number; limitUpCount: number; brokenRate: number; maxBoard: number; promotionRate: number; yesterdayPremium: number }
+  fund?: { mainNetSum5Yi: number; mainNetTodayYi?: number; consecutiveInflowDays: number; positiveDays: number }
+  dragon?: { tradeDate: string; netValueYi: number; orgNetValueYi?: number; hotMoneyNetValueYi?: number }
+  board?: { isLimitUp: boolean; height?: number; recognition?: number; isSectorLeader?: boolean; firstSealAt?: string; breakCount?: number }
+  profile?: { peTtm?: number; pb?: number; profitYoy?: number; debtRatio?: number; industryPePercentile?: number; valuationLabel?: string; rating: string }
+  opinions?: { score: number; stance: string; authors: string[]; claimCount: number; theses: string[] }
+  analysis: {
+    score: number
+    signalLabel: string
+    trendStatus: string
+    levels: { support: number[]; resistance: number[]; stopLoss: number; target: number }
+    risks: string[]
+  }
+}
+
+export interface ThesisAnalyzeResponse {
+  ok: boolean
+  reason?: string
+  parser?: 'llm' | 'rule'
+  structure?: ThesisStructure
+  facts?: ThesisFact[]
+  claims?: ThesisClaim[]
+  verdict?: ThesisVerdict
+  similar?: string[]
+  pack?: ThesisPack
+  candidates?: Array<{ code: string; name: string }>
+}
+
+export interface ThesisEvaluation {
+  entryDate: string
+  entryPrice: number
+  exitDate?: string
+  exitPrice?: number
+  days: number
+  returnPct?: number
+  benchmarkReturnPct?: number
+  excessPct?: number
+  status: 'pending' | 'settled'
+}
+
+export interface MyThesisRecord {
+  id: string
+  createdAt: number
+  updatedAt: number
+  author: '我'
+  code: string
+  name: string
+  direction: ThesisDirection
+  style: ThesisStyle
+  horizonDays: number
+  rawText: string
+  claims: ThesisClaim[]
+  facts: ThesisFact[]
+  verdict: ThesisVerdict
+  sector?: { name?: string; trend?: string; stage?: string; change5d?: number; heat?: number; limitUpCount?: number }
+  signalDate: string
+  evaluation: ThesisEvaluation
+  note?: string
+}
+
+export interface ThesisListResponse {
+  items: MyThesisRecord[]
+  stats: {
+    total: number
+    settled: number
+    pending: number
+    winRate: number
+    averageReturnPct: number
+    averageExcessPct: number
+    byStyle: Array<{ style: ThesisStyle; samples: number; winRate: number; averageExcessPct: number }>
+  }
+}
+
+export interface ThesisDiscussResponse {
+  reply: string
+  neededData: string[]
+}

@@ -6,6 +6,7 @@ import { loadWatchlist, removeFromWatchlist as removeWatch, removeFromWatchlistM
 
 export type DesktopView =
   | 'recommend'
+  | 'thesis'
   | 'market'
   | 'all-market'
   | 'events'
@@ -18,6 +19,7 @@ export type DesktopView =
   | 'data'
 export type MobileTab =
   | 'recommend'
+  | 'thesis'
   | 'market'
   | 'watchlist'
   | 'all'

@@ -98,6 +98,7 @@ interface NavGroup {
 const PRIMARY_TABS: NavItem[] = [
   { view: 'recommend', label: '今日推荐', hint: '按置信度排序的候选与理由' },
   { view: 'limit-up', label: '涨停板', hint: '涨停梯队、板块效应与情绪周期' },
+  { view: 'thesis', label: '我的观点', hint: '我的判断 → 数据对账 → 追踪结算' },
   { view: 'market', label: 'K线看盘', hint: '分时与日线、盘口、自选' },
   { view: 'strategy', label: '选股器', hint: '条件选股与候选工作台' },
 ]

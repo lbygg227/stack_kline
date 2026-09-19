@@ -666,7 +666,8 @@ export function loadSectorHistory(): SectorHistoryFile | null {
 
 /** 计算板块趋势：近 3 日均值 vs 前 3 日均值 */
 export function computeSectorTrends(file: SectorHistoryFile, options: { limit?: number } = {}): SectorTrend[] {
-  const limit = Math.max(1, Math.min(200, options.limit ?? 60))
+  // 上限放宽到 5000：观点工作台要按「用户提到的板块名」精确取趋势，不能被前 200 名截断
+  const limit = Math.max(1, Math.min(5000, options.limit ?? 60))
   const dates = file.dates
   const trends: SectorTrend[] = []
   for (const sector of file.sectors) {

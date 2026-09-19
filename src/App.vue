@@ -16,6 +16,7 @@ import BacktestResearch from './components/BacktestResearch.vue'
 import SimulationPanel from './components/SimulationPanel.vue'
 import DailyDigest from './components/DailyDigest.vue'
 import LimitUpPanel from './components/LimitUpPanel.vue'
+import ThesisDesk from './components/ThesisDesk.vue'
 import { useMarket } from './composables/useMarket'
 import type { MobileTab } from './composables/useMarket'
 
@@ -24,12 +25,12 @@ let timer: number | undefined
 
 /**
  * 移动端底部导航：13 项平铺在手机上一项只有 30px，既点不准也不好看。
- * 收敛成「5 个高频 + 更多面板」，其余页面进面板里按分组列出。
+ * 收敛成「4 个高频 + 更多面板」，其余页面进面板里按分组列出。
  */
 const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'recommend', label: '推荐', icon: '🎯' },
+  { key: 'thesis', label: '观点', icon: '💡' },
   { key: 'market', label: '行情', icon: '📈' },
-  { key: 'watchlist', label: '自选', icon: '⭐' },
   { key: 'limit-up', label: '涨停', icon: '🔥' },
 ]
 
@@ -54,6 +55,7 @@ const MOBILE_MORE_GROUPS: Array<{ title: string; items: Array<{ key: MobileTab; 
   {
     title: '工具',
     items: [
+      { key: 'watchlist', label: '自选股', icon: '⭐' },
       { key: 'trade', label: '交易', icon: '💰' },
       { key: 'data', label: '数据管理', icon: '🗄️' },
     ],
@@ -113,6 +115,7 @@ onBeforeUnmount(() => {
         <SimulationPanel v-else-if="mobileTab === 'simulation'" />
         <DailyDigest v-else-if="mobileTab === 'digest'" />
         <LimitUpPanel v-else-if="mobileTab === 'limit-up'" />
+        <ThesisDesk v-else-if="mobileTab === 'thesis'" />
         <OpinionPanel v-else-if="mobileTab === 'opinion'" />
         <TradePanel v-else-if="mobileTab === 'trade'" />
         <DataManagePanel v-else-if="mobileTab === 'data'" />
@@ -127,6 +130,7 @@ onBeforeUnmount(() => {
       <SimulationPanel v-else-if="state.view === 'simulation'" class="page-view" />
       <DailyDigest v-else-if="state.view === 'digest'" class="page-view" />
       <LimitUpPanel v-else-if="state.view === 'limit-up'" class="page-view" />
+      <ThesisDesk v-else-if="state.view === 'thesis'" class="page-view" />
       <NewsEventPanel v-else-if="state.view === 'events'" class="page-view" />
       <OpinionPanel v-else-if="state.view === 'opinion'" class="page-view" />
       <AllMarketPanel v-else-if="state.view === 'all-market'" class="page-view" />

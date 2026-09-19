@@ -74,6 +74,11 @@ import type {
   CandidateStatus,
   CandidateSource,
   CandidateContext,
+  MyThesisRecord,
+  ThesisAnalyzeResponse,
+  ThesisDiscussResponse,
+  ThesisListResponse,
+  ThesisStructure,
 } from '../types'
 import { searchLocal, stockNameOf } from '../data/stocks'
 import { generateDailyBars, generateMinuteBars, generateQuote } from '../data/mock'
@@ -1197,3 +1202,72 @@ export async function loadBarsForChart(args: {
 }
 
 export const quoteDisplayName = (code: string, fallback: string) => stockNameOf(code) || fallback
+
+// ---------------------------------------------------------------- 我的观点工作台
+
+export async function analyzeThesis(input: { text: string; code?: string }): Promise<ThesisAnalyzeResponse> {
+  const res = await fetch('/api/thesis/analyze', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? 'thesis analyze http ' + res.status)
+  }
+  return (await res.json()) as ThesisAnalyzeResponse
+}
+
+export async function saveThesis(input: {
+  text: string
+  code?: string
+  note?: string
+  structure?: ThesisStructure
+}): Promise<MyThesisRecord> {
+  const res = await fetch('/api/thesis', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? 'thesis save http ' + res.status)
+  }
+  const data = (await res.json()) as { record: MyThesisRecord }
+  return data.record
+}
+
+export async function fetchTheses(): Promise<ThesisListResponse> {
+  const res = await fetch('/api/thesis')
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? 'thesis list http ' + res.status)
+  }
+  return (await res.json()) as ThesisListResponse
+}
+
+export async function deleteThesis(id: string): Promise<void> {
+  const res = await fetch('/api/thesis/' + encodeURIComponent(id), { method: 'DELETE' })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? 'thesis delete http ' + res.status)
+  }
+}
+
+export async function discussThesis(input: {
+  code: string
+  question: string
+  text?: string
+  history: Array<{ role: 'user' | 'assistant'; content: string }>
+}): Promise<ThesisDiscussResponse> {
+  const res = await fetch('/api/thesis/discuss', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    const err = (await res.json().catch(() => null)) as { error?: string } | null
+    throw new Error(err?.error ?? 'thesis discuss http ' + res.status)
+  }
+  return (await res.json()) as ThesisDiscussResponse
+}

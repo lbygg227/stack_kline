@@ -105,6 +105,22 @@ import {
   refreshRecommendationWeights,
 } from './recommendation-weights.ts'
 import { buildRecommendationAttribution } from './recommendation-attribution.ts'
+import {
+  buildThesisDataPack,
+  buildThesisFacts,
+  composeThesis,
+  deleteThesis,
+  judgeClaims,
+  matchStocks,
+  resolveVerdict,
+  ruleStructure,
+  saveThesis,
+  settleTheses,
+  similarCases,
+  thesisStats,
+  type ThesisStructure,
+} from './thesis-desk.ts'
+import { discussThesis, phraseThesisReview, structureThesis } from './deepseek.ts'
 import { getReasonGuard } from './recommendation-guard.ts'
 import { buildLimitUpBoardFull, loadBoardHistory, loadBoardSnapshot, type LimitUpBoard } from './limit-up.ts'
 import { BOARD_TTL_MS, expectedBoardDate, inTradingWindow, resolveBoard } from './board-cache.ts'
@@ -439,6 +455,205 @@ export function marketDataPlugin(): Plugin {
               guard: getReasonGuard(),
             })
           }
+          return
+        }
+
+
+        // ---- 我的观点工作台 ----
+        if (path === '/api/thesis/analyze' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as { text?: string; code?: string }
+            const text = (body.text ?? '').trim()
+            if (text.length < 4) {
+              sendJson(res, 400, { error: '请先写下你的观点（至少 4 个字）' })
+              return
+            }
+            const stocks = service.stocksWithIndustry()
+            const candidates = matchStocks(text, stocks, 8)
+            let structure: ThesisStructure | null = null
+            let parser: 'llm' | 'rule' = 'rule'
+            if (candidates.length) {
+              const structured = await structureThesis({
+                text,
+                candidates: candidates.map((stock) => ({ code: stock.code, name: stock.name, industry: stock.industry })),
+              }).catch(() => null)
+              if (structured) {
+                structure = { ...structured, parser: 'llm' }
+                parser = 'llm'
+              }
+            }
+            if (!structure) structure = ruleStructure(text, stocks)
+            if (!structure) {
+              sendJson(res, 200, {
+                ok: false,
+                reason: '没有从你的观点里识别到具体标的，请带上股票名称或代码（例如「宁德时代」或 sz300750）',
+                candidates: candidates.map((stock) => ({ code: stock.code, name: stock.name })),
+              })
+              return
+            }
+            if (body.code && /^(sh|sz|bj)\d{6}$/.test(body.code)) {
+              const override = stocks.find((stock) => stock.code === body.code!.toLowerCase())
+              if (override) structure = { ...structure, code: override.code, name: override.name }
+            }
+            const pack = await buildThesisDataPack({ code: structure.code, stocks, text })
+            if (!pack) {
+              sendJson(res, 200, { ok: false, reason: '未找到该标的的快照数据，可能不在当前行情源覆盖范围内' })
+              return
+            }
+            const facts = buildThesisFacts({ direction: structure.direction, style: structure.style, pack })
+            const claims = judgeClaims(structure.claims, facts)
+            const verdict = resolveVerdict(facts, structure.direction)
+            const similar = similarCases(pack, structure.style)
+            const drafted = await phraseThesisReview({
+              direction: structure.direction,
+              style: structure.style,
+              horizonDays: structure.horizonDays,
+              claims,
+              facts: facts.map((fact) => ({ label: fact.label, detail: fact.detail, stance: fact.stance })),
+              score: verdict.score,
+              conclusion: verdict.conclusion,
+              similar,
+            }).catch(() => null)
+            if (drafted) {
+              verdict.summary = drafted.summary || verdict.summary
+              if (drafted.keyPoints.length) verdict.keyPoints = drafted.keyPoints
+              if (drafted.counterPoints.length) verdict.counterPoints = drafted.counterPoints
+              if (drafted.invalidation.length) verdict.invalidation = drafted.invalidation
+              if (drafted.watch.length) verdict.watch = drafted.watch
+            }
+            sendJson(res, 200, {
+              ok: true,
+              parser,
+              structure: { ...structure, parser },
+              facts,
+              claims,
+              verdict,
+              similar,
+              pack: {
+                code: pack.code,
+                name: pack.name,
+                price: pack.price,
+                changePct: pack.changePct,
+                industry: pack.industry,
+                concepts: pack.concepts,
+                sector: pack.sector,
+                sentiment: pack.sentiment,
+                fund: pack.fund,
+                dragon: pack.dragon,
+                board: pack.board,
+                profile: pack.profile,
+                opinions: pack.opinions,
+                analysis: {
+                  score: pack.analysis.score,
+                  signalLabel: pack.analysis.signalLabel,
+                  trendStatus: pack.analysis.trend.status,
+                  levels: pack.analysis.levels,
+                  risks: pack.analysis.risks,
+                },
+              },
+            })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path === '/api/thesis') {
+          if (req.method === 'GET') {
+            try {
+              const items = await settleTheses((code) => getKlineWithCache(code, 'day', 200))
+              sendJson(res, 200, { items, stats: thesisStats(items) })
+            } catch (e) {
+              sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = JSON.parse((await readBody(req)) || '{}') as {
+                text?: string
+                code?: string
+                note?: string
+                structure?: ThesisStructure
+              }
+              const text = (body.text ?? '').trim()
+              const stocks = service.stocksWithIndustry()
+              let structure = body.structure
+              if (!structure || !structure.code) structure = ruleStructure(text, stocks) ?? undefined
+              if (!structure) {
+                sendJson(res, 400, { error: '无法识别标的，请带上股票名称或代码' })
+                return
+              }
+              const pack = await buildThesisDataPack({ code: structure.code, stocks, text })
+              if (!pack) {
+                sendJson(res, 404, { error: '未找到该标的的快照数据' })
+                return
+              }
+              // 落盘时重新对账一次，避免沿用前端传来的旧事实
+              const facts = buildThesisFacts({ direction: structure.direction, style: structure.style, pack })
+              const claims = judgeClaims(structure.claims, facts)
+              const verdict = resolveVerdict(facts, structure.direction)
+              const record = composeThesis({
+                structure: { ...structure, parser: body.structure ? 'llm' : 'rule' },
+                rawText: text,
+                pack,
+                facts,
+                verdict,
+                claims,
+                note: body.note,
+              })
+              saveThesis(record)
+              sendJson(res, 200, { ok: true, record })
+            } catch (e) {
+              sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+            }
+            return
+          }
+          sendJson(res, 405, { error: 'method not allowed' })
+          return
+        }
+
+        if (path === '/api/thesis/discuss' && req.method === 'POST') {
+          try {
+            const body = JSON.parse((await readBody(req)) || '{}') as {
+              code?: string
+              question?: string
+              text?: string
+              history?: Array<{ role: 'user' | 'assistant'; content: string }>
+            }
+            if (!body.code || !/^(sh|sz|bj)\d{6}$/.test(body.code) || !body.question) {
+              sendJson(res, 400, { error: '缺少标的或问题' })
+              return
+            }
+            const pack = await buildThesisDataPack({
+              code: body.code,
+              stocks: service.stocksWithIndustry(),
+              text: body.text ?? body.question,
+            })
+            if (!pack) {
+              sendJson(res, 404, { error: '未找到该标的的快照数据' })
+              return
+            }
+            const facts = buildThesisFacts({
+              direction: 'watch',
+              style: 'trend',
+              pack,
+            })
+            const result = await discussThesis({
+              history: Array.isArray(body.history) ? body.history.slice(-8) : [],
+              facts: facts.map((fact) => ({ label: fact.label, detail: fact.detail, stance: fact.stance })),
+              question: body.question,
+            })
+            sendJson(res, 200, result ?? { reply: '模型暂时不可用，请稍后重试（指标与资金数据仍可在右侧面板查看）', neededData: [] })
+          } catch (e) {
+            sendJson(res, 500, { error: e instanceof Error ? e.message : String(e) })
+          }
+          return
+        }
+
+        if (path.startsWith('/api/thesis/') && req.method === 'DELETE') {
+          const id = decodeURIComponent(path.slice('/api/thesis/'.length))
+          sendJson(res, 200, { ok: deleteThesis(id) })
           return
         }
 
