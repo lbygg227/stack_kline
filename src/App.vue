@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import TopBar from './components/TopBar.vue'
 import MarketList from './components/MarketList.vue'
 import StockList from './components/StockList.vue'
@@ -22,21 +22,51 @@ import type { MobileTab } from './composables/useMarket'
 const { state, isMobile, mobileTab, refreshQuotes, setMobileTab, toggleTradePanel } = useMarket()
 let timer: number | undefined
 
+/**
+ * 移动端底部导航：13 项平铺在手机上一项只有 30px，既点不准也不好看。
+ * 收敛成「5 个高频 + 更多面板」，其余页面进面板里按分组列出。
+ */
 const MOBILE_TABS: Array<{ key: MobileTab; label: string; icon: string }> = [
   { key: 'recommend', label: '推荐', icon: '🎯' },
   { key: 'market', label: '行情', icon: '📈' },
   { key: 'watchlist', label: '自选', icon: '⭐' },
-  { key: 'all', label: '市场', icon: '📊' },
-  { key: 'events', label: '资讯', icon: '📰' },
-  { key: 'strategy', label: '选股', icon: '🔍' },
-  { key: 'backtest', label: '回测', icon: '🧪' },
-  { key: 'simulation', label: '模拟盘', icon: '💼' },
   { key: 'limit-up', label: '涨停', icon: '🔥' },
-  { key: 'digest', label: '复盘', icon: '🗒️' },
-  { key: 'opinion', label: '观点', icon: '📝' },
-  { key: 'trade', label: '交易', icon: '💰' },
-  { key: 'data', label: '数据', icon: '🗄️' },
 ]
+
+const MOBILE_MORE_GROUPS: Array<{ title: string; items: Array<{ key: MobileTab; label: string; icon: string }> }> = [
+  {
+    title: '研究',
+    items: [
+      { key: 'all', label: '全市场', icon: '📊' },
+      { key: 'strategy', label: '选股器', icon: '🔍' },
+      { key: 'opinion', label: '观点研究', icon: '📝' },
+      { key: 'events', label: '资讯事件', icon: '📰' },
+    ],
+  },
+  {
+    title: '复盘',
+    items: [
+      { key: 'backtest', label: '回测研究', icon: '🧪' },
+      { key: 'simulation', label: '模拟盘', icon: '💼' },
+      { key: 'digest', label: '每日复盘', icon: '🗒️' },
+    ],
+  },
+  {
+    title: '工具',
+    items: [
+      { key: 'trade', label: '交易', icon: '💰' },
+      { key: 'data', label: '数据管理', icon: '🗄️' },
+    ],
+  },
+]
+
+const showMoreTabs = ref(false)
+const moreActive = computed(() => MOBILE_MORE_GROUPS.some((g) => g.items.some((i) => i.key === mobileTab.value)))
+
+function pickMobileTab(key: MobileTab) {
+  setMobileTab(key)
+  showMoreTabs.value = false
+}
 
 function onVisibilityChange() {
   if (document.visibilityState === 'visible') {
@@ -123,12 +153,44 @@ onBeforeUnmount(() => {
         :key="t.key"
         class="mn-item"
         :class="{ active: mobileTab === t.key }"
-        @click="setMobileTab(t.key)"
+        @click="pickMobileTab(t.key)"
       >
         <span class="mn-icon">{{ t.icon }}</span>
         <span>{{ t.label }}</span>
       </button>
+      <button
+        class="mn-item"
+        :class="{ active: moreActive || showMoreTabs }"
+        @click="showMoreTabs = !showMoreTabs"
+      >
+        <span class="mn-icon">☰</span>
+        <span>更多</span>
+      </button>
     </nav>
+
+    <Transition name="sheet">
+      <div v-if="isMobile && showMoreTabs" class="more-sheet">
+        <div class="more-head">
+          <b>全部功能</b>
+          <button class="more-close" @click="showMoreTabs = false">✕</button>
+        </div>
+        <div v-for="group in MOBILE_MORE_GROUPS" :key="group.title" class="more-group">
+          <div class="more-title">{{ group.title }}</div>
+          <div class="more-items">
+            <button
+              v-for="item in group.items"
+              :key="item.key"
+              class="more-item"
+              :class="{ active: mobileTab === item.key }"
+              @click="pickMobileTab(item.key)"
+            >
+              <span class="mi-icon">{{ item.icon }}</span>
+              <span class="mi-label">{{ item.label }}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </Transition>
   </div>
 </template>
 
@@ -237,6 +299,9 @@ onBeforeUnmount(() => {
 .mobile-nav {
   display: none;
 }
+.more-sheet {
+  display: none;
+}
 
 @media (max-width: 820px) {
   .main {
@@ -253,6 +318,10 @@ onBeforeUnmount(() => {
 
   .page-view {
     margin: 8px;
+  }
+
+  .more-sheet {
+    display: block;
   }
 
   .mobile-nav {
@@ -289,4 +358,70 @@ onBeforeUnmount(() => {
     line-height: 1;
   }
 }
+
+/* 移动端「更多」面板 */
+.mobile-nav { position: relative; }
+.more-sheet {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(54px + env(safe-area-inset-bottom));
+  z-index: 30;
+  max-height: 62vh;
+  overflow-y: auto;
+  padding: 12px 12px 16px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  border-radius: 14px 14px 0 0;
+  box-shadow: 0 -8px 24px rgba(15, 23, 42, 0.14);
+}
+.more-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--text-1);
+}
+.more-close {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 14px;
+  cursor: pointer;
+}
+.more-group { margin-bottom: 12px; }
+.more-title {
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.more-items {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+.more-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 4px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-size: 11px;
+  cursor: pointer;
+}
+.more-item.active {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+.mi-icon { font-size: 17px; line-height: 1; }
+.sheet-enter-active,
+.sheet-leave-active { transition: opacity 0.18s ease, transform 0.18s ease; }
+.sheet-enter-from,
+.sheet-leave-to { opacity: 0; transform: translateY(12px); }
 </style>
